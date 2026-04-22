@@ -13,13 +13,14 @@ DB_PATH = CACHE_DIR / "prices.duckdb"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS prices (
-    ticker   VARCHAR NOT NULL,
-    date     DATE    NOT NULL,
-    open     DOUBLE,
-    high     DOUBLE,
-    low      DOUBLE,
-    close    DOUBLE,
-    volume   BIGINT,
+    ticker     VARCHAR NOT NULL,
+    date       DATE    NOT NULL,
+    open       DOUBLE,
+    high       DOUBLE,
+    low        DOUBLE,
+    close      DOUBLE,
+    adj_close  DOUBLE,
+    volume     BIGINT,
     PRIMARY KEY (ticker, date)
 );
 """
@@ -50,6 +51,8 @@ def _download(ticker: str, start: date, end: date) -> pd.DataFrame:
 
     hist = hist.reset_index()
     hist.columns = [str(c).lower() for c in hist.columns]
+    if "adj close" in hist.columns:
+        hist = hist.rename(columns={"adj close": "adj_close"})
 
     date_col = "date" if "date" in hist.columns else "datetime"
     dt = pd.to_datetime(hist[date_col])
@@ -57,7 +60,10 @@ def _download(ticker: str, start: date, end: date) -> pd.DataFrame:
         dt = dt.dt.tz_localize(None)
     hist["date"] = dt.dt.date
 
-    return hist[["date", "open", "high", "low", "close", "volume"]]
+    if "adj_close" not in hist.columns:
+        hist["adj_close"] = hist["close"]
+
+    return hist[["date", "open", "high", "low", "close", "adj_close", "volume"]]
 
 
 def get_currency(ticker: str) -> str:
@@ -94,7 +100,7 @@ def get_prices(ticker: str, start: date, end: date, *, use_cache: bool = True) -
 
         out = con.execute(
             """
-            SELECT date, open, high, low, close, volume
+            SELECT date, open, high, low, close, adj_close, volume
             FROM prices
             WHERE ticker = ? AND date BETWEEN ? AND ?
             ORDER BY date

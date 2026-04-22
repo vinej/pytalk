@@ -31,8 +31,10 @@ def _compute_row(ticker: str, category: str, end: date) -> dict | None:
     if prices.empty or len(prices) < 20:
         return None
 
-    close = prices["close"]
+    close = prices["close"]                # price-return series (for indicators / risk)
+    tr_close = prices["adj_close"]         # total-return series (for return columns)
     current = float(close.iloc[-1])
+    current_tr = float(tr_close.iloc[-1])
 
     row: dict = {
         "Ticker": ticker,
@@ -43,7 +45,7 @@ def _compute_row(ticker: str, category: str, end: date) -> dict | None:
 
     for period_name, months in PERIODS.items():
         target = pd.Timestamp(end) - pd.DateOffset(months=months)
-        before = close.loc[:target]
+        before = tr_close.loc[:target]
         if before.empty:
             row[period_name] = None
             continue
@@ -51,7 +53,7 @@ def _compute_row(ticker: str, category: str, end: date) -> dict | None:
         if past <= 0:
             row[period_name] = None
             continue
-        row[period_name] = (current / past - 1) * 100
+        row[period_name] = (current_tr / past - 1) * 100
 
     r = rsi(close, 14)
     row["RSI"] = float(r.iloc[-1]) if not r.empty and not pd.isna(r.iloc[-1]) else None

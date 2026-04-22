@@ -88,41 +88,69 @@ with st.spinner("Loading past performance…"):
     perf_prices = get_prices(ticker, _perf_start, end)
 
 
-def _compact_metric(col, label: str, value: str, ret: float | None = None) -> None:
-    color = ""
-    if ret is not None:
-        if ret > 0:
-            color = "color:#2ca02c;"
-        elif ret < 0:
-            color = "color:#d62728;"
+def _ret_color(ret: float | None) -> str:
+    if ret is None:
+        return ""
+    if ret > 0:
+        return "color:#2ca02c;"
+    if ret < 0:
+        return "color:#d62728;"
+    return ""
+
+
+def _compact_metric(
+    col,
+    label: str,
+    tr_value: str,
+    pr_value: str,
+    tr_ret: float | None = None,
+    pr_ret: float | None = None,
+) -> None:
     col.markdown(
         f'<div style="text-align:center; padding:0.15em 0;">'
-        f'<div style="font-size:0.75em; color:#888;">{label}</div>'
-        f'<div style="font-size:1em; font-weight:600; {color}">{value}</div>'
+        f'<div style="font-size:0.72em; color:#666;">{label}</div>'
+        f'<div style="font-size:0.85em; font-weight:600; {_ret_color(tr_ret)}">'
+        f'<span style="color:#999; font-weight:400;">TR</span> {tr_value}</div>'
+        f'<div style="font-size:0.85em; font-weight:500; {_ret_color(pr_ret)}">'
+        f'<span style="color:#999; font-weight:400;">PR</span> {pr_value}</div>'
         f"</div>",
         unsafe_allow_html=True,
     )
 
 
 st.subheader("Past performance")
+st.caption(
+    "**TR** = Total Return (price + reinvested dividends, retirement-relevant). "
+    "**PR** = Price Return (split-adjusted, no dividends — matches Yahoo/Google)."
+)
 if perf_prices.empty or len(perf_prices) < 2:
     st.caption("No historical data available.")
 else:
-    current_price = perf_prices["close"].iloc[-1]
+    current_pr = float(perf_prices["close"].iloc[-1])
+    current_tr = float(perf_prices["adj_close"].iloc[-1])
 
     cols = st.columns(len(PERF_PERIODS))
     for (period_label, months), col in zip(PERF_PERIODS, cols):
         target = pd.Timestamp(end) - pd.DateOffset(months=months)
         before = perf_prices.loc[:target]
         if before.empty:
-            _compact_metric(col, period_label, "—")
+            _compact_metric(col, period_label, "—", "—")
             continue
-        past_price = float(before["close"].iloc[-1])
-        if past_price <= 0:
-            _compact_metric(col, period_label, "—")
+        past_pr = float(before["close"].iloc[-1])
+        past_tr = float(before["adj_close"].iloc[-1])
+        if past_pr <= 0 or past_tr <= 0:
+            _compact_metric(col, period_label, "—", "—")
             continue
-        ret = (current_price / past_price - 1) * 100
-        _compact_metric(col, period_label, f"{ret:+.2f}%", ret=ret)
+        pr_ret = (current_pr / past_pr - 1) * 100
+        tr_ret = (current_tr / past_tr - 1) * 100
+        _compact_metric(
+            col,
+            period_label,
+            f"{tr_ret:+.2f}%",
+            f"{pr_ret:+.2f}%",
+            tr_ret=tr_ret,
+            pr_ret=pr_ret,
+        )
 
     year_cols = st.columns(5)
     years = [end.year - i for i in range(5)]
@@ -137,15 +165,25 @@ else:
         before_end = perf_prices.loc[:end_ts]
         year_label = f"{y} YTD" if y == end.year else str(y)
         if before_start.empty or before_end.empty:
-            _compact_metric(year_cols[i], year_label, "—")
+            _compact_metric(year_cols[i], year_label, "—", "—")
             continue
-        s_close = float(before_start["close"].iloc[-1])
-        e_close = float(before_end["close"].iloc[-1])
-        if s_close <= 0:
-            _compact_metric(year_cols[i], year_label, "—")
+        s_pr = float(before_start["close"].iloc[-1])
+        e_pr = float(before_end["close"].iloc[-1])
+        s_tr = float(before_start["adj_close"].iloc[-1])
+        e_tr = float(before_end["adj_close"].iloc[-1])
+        if s_pr <= 0 or s_tr <= 0:
+            _compact_metric(year_cols[i], year_label, "—", "—")
             continue
-        year_ret = (e_close / s_close - 1) * 100
-        _compact_metric(year_cols[i], year_label, f"{year_ret:+.2f}%", ret=year_ret)
+        pr_ret = (e_pr / s_pr - 1) * 100
+        tr_ret = (e_tr / s_tr - 1) * 100
+        _compact_metric(
+            year_cols[i],
+            year_label,
+            f"{tr_ret:+.2f}%",
+            f"{pr_ret:+.2f}%",
+            tr_ret=tr_ret,
+            pr_ret=pr_ret,
+        )
 
 indicators = indicators_for(strategy_name, df) if show_indicators else []
 price_overlays = [ind for ind in indicators if ind.panel == "price"]
