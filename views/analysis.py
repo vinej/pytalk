@@ -195,7 +195,13 @@ for ind in indicators[:3]:
     metrics.append((ind.name, f"{value.iloc[-1]:.2f}" if not value.empty else "—"))
 cols = st.columns(len(metrics))
 for col, (name, value) in zip(cols, metrics):
-    col.metric(name, value)
+    col.markdown(
+        f'<div style="text-align:center; padding:0.2em 0;">'
+        f'<div style="font-size:0.75em; color:#888;">{name}</div>'
+        f'<div style="font-size:1em; font-weight:600;">{value}</div>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 has_sub = bool(sub_indicators)
 rows = 3 if has_sub else 2
