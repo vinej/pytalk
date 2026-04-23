@@ -6,14 +6,22 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from pytalk import get_prices, run_backtest, run_portfolio_backtest
+from pytalk import get_prices, run_backtest, run_portfolio_backtest, run_portfolio_buy_hold
+from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
 from pytalk.portfolios import get_portfolio, list_portfolios
 from pytalk.strategies import STRATEGIES
 from pytalk.universe import CATEGORIES, OTHER, label, tickers
 
-# Preserve widget state across page navigation
+# Preserve widget state across page navigation.
+# Skip keys that look like button widgets — Streamlit forbids re-assigning their state.
+_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_")
 for _k in list(st.session_state.keys()):
-    st.session_state[_k] = st.session_state[_k]
+    if any(_h in _k for _h in _BUTTON_HINTS):
+        continue
+    try:
+        st.session_state[_k] = st.session_state[_k]
+    except Exception:
+        pass
 
 with st.sidebar:
     mode = st.radio(
@@ -75,7 +83,28 @@ with st.sidebar:
     )
 
     params: dict[str, float | int] = {}
-    if strategy_name == "SMA Cross":
+    rebalance_freq = "none"
+    if strategy_name == "Buy & Hold" and mode == "Portfolio":
+        _reb_label = st.selectbox(
+            "Rebalance frequency",
+            ["None (drift)", "Monthly", "Quarterly", "Yearly"],
+            index=2,
+            key="bt_reb_freq",
+        )
+        rebalance_freq = {
+            "None (drift)": "none",
+            "Monthly": "M",
+            "Quarterly": "Q",
+            "Yearly": "Y",
+        }[_reb_label]
+    if strategy_name == "Buy & Hold":
+        pass  # no other params
+    elif strategy_name == "Faber Trend Filter":
+        params["window"] = st.slider(
+            "SMA window (trading days, ~21 per month)",
+            20, 500, 200, key="bt_faber_window"
+        )
+    elif strategy_name == "SMA Cross":
         params["fast"] = st.slider("Fast SMA", 5, 100, 20, key="bt_sma_fast")
         params["slow"] = st.slider("Slow SMA", 20, 300, 50, key="bt_sma_slow")
     elif strategy_name == "MACD Cross":
@@ -167,14 +196,23 @@ if run:
                 weights[h.ticker] = h.weight
         with st.spinner("Running backtest…"):
             try:
-                portfolio_result = run_portfolio_backtest(
-                    prices_by_ticker,
-                    weights,
-                    strategy,
-                    cash=float(cash),
-                    commission=commission,
-                    **params,
-                )
+                if strategy_name == "Buy & Hold":
+                    portfolio_result = run_portfolio_buy_hold(
+                        prices_by_ticker,
+                        weights,
+                        cash=float(cash),
+                        commission=commission,
+                        rebalance_freq=rebalance_freq,
+                    )
+                else:
+                    portfolio_result = run_portfolio_backtest(
+                        prices_by_ticker,
+                        weights,
+                        strategy,
+                        cash=float(cash),
+                        commission=commission,
+                        **params,
+                    )
             except ValueError as e:
                 st.error(str(e))
                 st.stop()
@@ -210,8 +248,32 @@ if bt_mode == "Single ticker":
     equity = result.equity_curve
     st.plotly_chart(
         _equity_figure(equity.index, equity["Equity"], equity["DrawdownPct"] * 100),
-        use_container_width=True,
+        width="stretch",
     )
+
+    if st.button("🧠 Explain this result"):
+        if not llm_available():
+            st.error(unavailable_message())
+        else:
+            prompt = f"""Explain this backtest result for a retail investor.
+
+Strategy: {bt_strategy}
+Ticker: {bt_ticker} ({bt_category})
+Return: {stats['Return [%]']:.2f}%
+Buy & Hold return: {stats['Buy & Hold Return [%]']:.2f}%
+Sharpe Ratio: {stats['Sharpe Ratio']:.2f}
+Max Drawdown: {stats['Max. Drawdown [%]']:.2f}%
+Number of trades: {int(stats.get('# Trades', 0))}
+Win rate: {float(stats.get('Win Rate [%]', 0)):.1f}%
+
+Respond as a markdown numbered list — one short sentence per point, no introduction, no final paragraph:
+1. Did the strategy beat buy-and-hold? By how much?
+2. Was the risk-adjusted return (Sharpe) reasonable?
+3. Was the drawdown psychologically tradeable?
+4. One honest caveat (overfitting, small sample, single-asset, etc.)
+"""
+            with st.container(border=True):
+                st.write_stream(ask_llm_stream(prompt))
 
     st.subheader("Trades")
     st.dataframe(result.trades)
@@ -243,7 +305,7 @@ else:
     drawdown_pct = ((equity / roll_max) - 1) * 100
     st.plotly_chart(
         _equity_figure(equity.index, equity.values, drawdown_pct.values),
-        use_container_width=True,
+        width="stretch",
     )
 
     st.subheader("Per-ticker results")
@@ -261,12 +323,44 @@ else:
                 "# Trades": int(s.get("# Trades", 0)),
             }
         )
-    st.dataframe(pd.DataFrame(per_ticker_rows), use_container_width=True)
+    per_ticker_df = pd.DataFrame(per_ticker_rows)
+    st.dataframe(per_ticker_df, width="stretch")
+
+    if st.button("🧠 Explain this result"):
+        if not llm_available():
+            st.error(unavailable_message())
+        else:
+            per_ticker_text = "\n".join(
+                f"  {r['Ticker']} (weight {r['Weight']}): "
+                f"return {r['Return [%]']}%, B&H {r['Buy & Hold [%]']}%, "
+                f"Sharpe {r['Sharpe']}, DD {r['Max DD [%]']}%"
+                for r in per_ticker_rows
+            )
+            prompt = f"""Explain this portfolio backtest for a retail investor.
+
+Portfolio: {bt_portfolio_name}
+Strategy applied to each holding: {bt_strategy}
+Aggregate return: {stats['Return [%]']:.2f}%
+Aggregate Sharpe: {stats['Sharpe Ratio']:.2f}
+Aggregate Max Drawdown: {stats['Max. Drawdown [%]']:.2f}%
+Final equity: {stats['Final Equity']:,.0f}
+
+Per-ticker results:
+{per_ticker_text}
+
+Respond as a markdown numbered list — one short sentence per point, no introduction, no final paragraph:
+1. Did the portfolio-level strategy produce a reasonable risk-adjusted return?
+2. Which holdings carried the portfolio? Which ones hurt it?
+3. Was the diversification helpful (lower drawdown than any single name)?
+4. One honest caveat about applying the same strategy to very different assets.
+"""
+            with st.container(border=True):
+                st.write_stream(ask_llm_stream(prompt))
 
     with st.expander("Per-ticker trades"):
         for tkr, per_result in portfolio_result.per_ticker.items():
             st.markdown(f"**{tkr}**")
-            st.dataframe(per_result.trades, use_container_width=True)
+            st.dataframe(per_result.trades, width="stretch")
 
     with st.expander("Portfolio stats"):
         st.dataframe(stats.astype(str).to_frame("value"))

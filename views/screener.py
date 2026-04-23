@@ -10,9 +10,16 @@ from pytalk import get_prices
 from pytalk.indicators import rsi, sma
 from pytalk.universe import CATEGORIES, UNIVERSE
 
-# Preserve widget state across page navigation
+# Preserve widget state across page navigation.
+# Skip keys that look like button widgets — Streamlit forbids re-assigning their state.
+_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_")
 for _k in list(st.session_state.keys()):
-    st.session_state[_k] = st.session_state[_k]
+    if any(_h in _k for _h in _BUTTON_HINTS):
+        continue
+    try:
+        st.session_state[_k] = st.session_state[_k]
+    except Exception:
+        pass
 
 st.title("Screener")
 
@@ -273,7 +280,7 @@ filtered = filtered.sort_values(
 st.subheader(f"Results — {len(filtered)} of {len(df)}")
 st.dataframe(
     filtered,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     column_config={
         "Price": st.column_config.NumberColumn(format="%.2f"),

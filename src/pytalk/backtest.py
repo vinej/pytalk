@@ -134,3 +134,96 @@ def run_portfolio_backtest(
         weights=normalized,
         skipped=skipped,
     )
+
+
+def run_portfolio_buy_hold(
+    prices_by_ticker: dict[str, pd.DataFrame],
+    weights: dict[str, float],
+    *,
+    cash: float = 10_000,
+    commission: float = 0.002,
+    rebalance_freq: str = "none",
+) -> PortfolioBacktestResult:
+    """Buy target-weighted holdings, optionally rebalancing on a schedule.
+
+    rebalance_freq: "none" (drift), "M" (monthly), "Q" (quarterly), "Y" (yearly).
+    Commission is applied to the traded notional during each rebalance.
+    """
+    from pytalk.strategies.buy_hold import BuyHold
+
+    total_weight = sum(weights.values())
+    if total_weight <= 0:
+        raise ValueError("Weights must sum to a positive value")
+
+    # Align close prices across holdings
+    closes: dict[str, pd.Series] = {}
+    skipped: list[str] = []
+    for ticker in weights:
+        prices = prices_by_ticker.get(ticker)
+        if prices is None or prices.empty:
+            skipped.append(ticker)
+            continue
+        closes[ticker] = prices["close"]
+
+    if not closes:
+        raise ValueError("No usable price data for any holding in the portfolio")
+
+    closes_df = pd.DataFrame(closes).sort_index().ffill().dropna()
+    if closes_df.empty:
+        raise ValueError("No overlapping dates across the portfolio's holdings")
+
+    tickers = list(closes_df.columns)
+    w_total = sum(weights[t] for t in tickers)
+    norm_w = {t: weights[t] / w_total for t in tickers}
+
+    rebalance_dates: set = set()
+    if rebalance_freq in ("M", "Q", "Y"):
+        freq_map = {"M": "MS", "Q": "QS", "Y": "YS"}
+        anchors = pd.date_range(
+            closes_df.index.min(),
+            closes_df.index.max(),
+            freq=freq_map[rebalance_freq],
+        )
+        # Snap each anchor to the first trading day at or after it
+        for a in anchors:
+            future = closes_df.index[closes_df.index >= a]
+            if len(future) > 0:
+                rebalance_dates.add(future[0])
+
+    first_row = closes_df.iloc[0]
+    shares = {t: (cash * norm_w[t]) / float(first_row[t]) for t in tickers}
+    equity_values: list[float] = []
+
+    for i, (dt, row) in enumerate(closes_df.iterrows()):
+        pv = sum(shares[t] * float(row[t]) for t in tickers)
+        if i > 0 and dt in rebalance_dates:
+            # Compute trade notional to restore target weights, then deduct commission
+            trade_cost = 0.0
+            for t in tickers:
+                target_value = pv * norm_w[t]
+                current_value = shares[t] * float(row[t])
+                trade_cost += abs(target_value - current_value) * commission
+            pv -= trade_cost
+            for t in tickers:
+                shares[t] = (pv * norm_w[t]) / float(row[t])
+        equity_values.append(pv)
+
+    equity = pd.Series(equity_values, index=closes_df.index)
+
+    # Per-ticker breakdown: independent buy-and-hold on each holding (drift-based)
+    per_ticker: dict[str, BacktestResult] = {}
+    for t in tickers:
+        allocation = cash * norm_w[t]
+        try:
+            per_ticker[t] = run_backtest(
+                prices_by_ticker[t], BuyHold, cash=allocation, commission=commission
+            )
+        except Exception:
+            pass
+
+    return PortfolioBacktestResult(
+        equity=equity,
+        per_ticker=per_ticker,
+        weights=norm_w,
+        skipped=skipped,
+    )

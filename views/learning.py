@@ -6,11 +6,16 @@ st.title("Learning — strategies")
 
 st.markdown(
     """
-The Backtest page offers six classic technical strategies. They fall into three families:
+The Backtest page offers eight strategies across two broad camps:
 
-- **Trend-following** — profit when price keeps moving in one direction *(SMA Cross, MACD Cross)*
-- **Mean-reversion** — profit when price returns to a central value *(RSI, Bollinger, VWAP)*
-- **Breakout** — profit from sustained moves past a recent range *(Donchian)*
+**Passive / allocation-oriented (realistic baselines for retail investors):**
+- **Buy & Hold** — the benchmark everything else is measured against
+- **Faber Trend Filter** — the one technical strategy with credible academic support for retirement drawdown control
+
+**Active / trade-signal strategies (mostly educational — they rarely beat buy-and-hold):**
+- **Trend-following** — *SMA Cross, MACD Cross*
+- **Mean-reversion** — *RSI, Bollinger, VWAP*
+- **Breakout** — *Donchian*
 
 No strategy wins in every market. Parameter tuning and market regime matter as much as
 the strategy choice. Always compare the backtest return against **Buy & Hold** to see
@@ -20,7 +25,68 @@ whether the strategy is actually adding value.
 
 st.divider()
 
-with st.expander("SMA Cross — trend-following", expanded=True):
+with st.expander("Buy & Hold — the baseline", expanded=True):
+    st.markdown(
+        """
+**What it does.** Buys the asset on day 1 and holds to the end of the backtest.
+No signals, no parameters.
+
+**Why it's here.** It's the benchmark every other strategy should be judged against.
+If a more complex strategy doesn't beat Buy & Hold after costs, the added complexity
+isn't earning its keep.
+
+**For portfolios**, choosing Buy & Hold unlocks a **Rebalance frequency** setting
+(Monthly / Quarterly / Yearly / None). Rebalancing resets each holding back to its
+target weight on schedule — the realistic retail retirement workflow. No rebalancing
+means the allocation drifts with performance, which is also a valid choice.
+
+**Works best when…** the asset has a positive long-run drift (equities, diversified
+index funds). Over 10+ years, this is usually the hardest strategy to beat.
+
+**Watch out for…** the Max Drawdown. A +250% return looks great on paper until
+you realize it came with a -55% peak-to-trough dip you had to sit through without
+panic-selling. Drawdown tolerance is the real test of this strategy.
+"""
+    )
+
+with st.expander("Faber Trend Filter — the retirement-friendly risk-off rule"):
+    st.markdown(
+        """
+**What it does.** Holds the asset when its closing price is above the long-term
+moving average (default: 200-day SMA, ~10 calendar months). Moves to cash when
+price drops below. Re-enters when price crosses back above.
+
+**How it works.** One of the few technical rules with credible academic evidence:
+Mebane Faber's 2007 paper *"A Quantitative Approach to Tactical Asset Allocation"*
+showed that a simple 10-month moving-average filter applied to major asset classes
+produced roughly the same long-run return as buy-and-hold but with **about half
+the drawdown**. The filter keeps you out of the worst parts of major bear markets
+(2000–2002, 2008, early 2020, 2022) while letting trends run.
+
+**Parameters**
+- **SMA window** *(200)* — default is ~10 calendar months on daily bars, matching
+  Faber's original paper. Shorter windows react faster (more whipsaws); longer
+  windows are smoother (later entries and exits).
+
+**Works best when…** bear markets are extended and visible in the trend (as in 2008
+and 2022). The cost of small whipsaws in range-bound markets is more than paid back
+by avoiding the 30–55% crashes.
+
+**Works worst when…** volatile chop without a real bear market (the signal flickers
+between in/out and you eat small losses from each switch). Also misses the fastest
+rebounds — e.g., by the time price cleared the 200-SMA after March 2020, the S&P
+had already recovered ~30%.
+
+**Why this one matters for retirees.** During the withdrawal phase, sequence-of-
+returns risk is the main threat: a big drawdown early in retirement permanently
+damages the portfolio because you're selling into it for income. Reducing peak
+drawdown from -55% to -25% is worth more than an extra 1% of annualized return.
+This is the most defensible "technical strategy" for someone managing retirement
+capital.
+"""
+    )
+
+with st.expander("SMA Cross — trend-following"):
     st.markdown(
         """
 **What it does.** Buys when a fast simple moving average crosses *above* a slow one

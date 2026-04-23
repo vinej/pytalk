@@ -71,7 +71,17 @@ def _vwap_reversion(
     ]
 
 
+def _buy_hold(prices: pd.DataFrame) -> list[Indicator]:
+    return []
+
+
+def _faber_trend(prices: pd.DataFrame, window: int = 200) -> list[Indicator]:
+    return [Indicator(f"SMA {window}", sma(prices["close"], window))]
+
+
 _INDICATORS = {
+    "Buy & Hold": _buy_hold,
+    "Faber Trend Filter": _faber_trend,
     "SMA Cross": _sma_cross,
     "MACD Cross": _macd_cross,
     "RSI Mean Reversion": _rsi_reversion,

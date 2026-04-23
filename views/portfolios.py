@@ -4,6 +4,7 @@ import uuid
 
 import streamlit as st
 
+from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
 from pytalk.portfolios import (
     Holding,
     Portfolio,
@@ -12,13 +13,27 @@ from pytalk.portfolios import (
     list_portfolios,
     save_portfolio,
 )
-from pytalk.universe import CATEGORIES, OTHER, label, tickers
+from pytalk.universe import CATEGORIES, OTHER, UNIVERSE, label, tickers
 
-# Preserve widget state across page navigation
+CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
+
+# Preserve widget state across page navigation.
+# Skip keys that look like button widgets — Streamlit forbids re-assigning their state.
+_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_", "clear_")
 for _k in list(st.session_state.keys()):
-    st.session_state[_k] = st.session_state[_k]
+    if any(_h in _k for _h in _BUTTON_HINTS):
+        continue
+    try:
+        st.session_state[_k] = st.session_state[_k]
+    except Exception:
+        pass
 
 st.title("Portfolios")
+
+
+def _pop_ss(key: str) -> None:
+    """Callback helper — drops a session_state key before Streamlit's auto-rerun."""
+    st.session_state.pop(key, None)
 
 
 def _blank_row() -> dict:
@@ -150,7 +165,7 @@ create_holdings = _holdings_editor("_create_rows")
 
 if st.button("Save portfolio", type="primary", key="_create_save"):
     try:
-        save_portfolio(Portfolio(name=new_name.strip(), holdings=create_holdings))
+        save_portfolio(CURRENT_USER, Portfolio(name=new_name.strip(), holdings=create_holdings))
         st.success(f"Saved portfolio “{new_name.strip()}”.")
         st.session_state.pop("_create_rows", None)
         st.session_state.pop("_create_name", None)
@@ -161,13 +176,13 @@ if st.button("Save portfolio", type="primary", key="_create_save"):
 st.divider()
 st.header("Existing portfolios")
 
-names = list_portfolios()
+names = list_portfolios(CURRENT_USER)
 if not names:
     st.info("No portfolios yet. Create one above.")
     st.stop()
 
 for name in names:
-    portfolio = get_portfolio(name)
+    portfolio = get_portfolio(CURRENT_USER, name)
     if portfolio is None:
         continue
     with st.expander(f"{name} ({len(portfolio.holdings)} holdings)"):
@@ -178,14 +193,14 @@ for name in names:
         col_save, col_delete = st.columns(2)
         if col_save.button("Save changes", key=f"save_{name}", type="primary"):
             try:
-                save_portfolio(Portfolio(name=name, holdings=edited))
+                save_portfolio(CURRENT_USER, Portfolio(name=name, holdings=edited))
                 st.session_state.pop(state_key, None)
                 st.success("Updated.")
                 st.rerun()
             except ValueError as e:
                 st.error(str(e))
         if col_delete.button("Delete", key=f"del_{name}"):
-            delete_portfolio(name)
+            delete_portfolio(CURRENT_USER, name)
             st.session_state.pop(state_key, None)
             st.success(f"Deleted “{name}”.")
             st.rerun()
@@ -194,3 +209,57 @@ for name in names:
         if total > 0:
             normalized = ", ".join(f"{h.ticker}: {h.weight/total:.1%}" for h in edited)
             st.caption(f"Normalized weights — {normalized}")
+
+        _validate_key = f"_portfolios_validate_{name}"
+        if st.button("🧠 Validate portfolio"):
+            if not llm_available():
+                st.error(unavailable_message())
+            elif not edited or total <= 0:
+                st.warning("Save the portfolio first, or fix zero weights.")
+            else:
+                holdings_text = "\n".join(
+                    f"  - {h.ticker} ({h.category}) "
+                    f"[{UNIVERSE.get(h.category, {}).get(h.ticker) or 'custom'}] — "
+                    f"{h.weight/total:.1%}"
+                    for h in edited
+                )
+                by_type = {}
+                for h in edited:
+                    by_type[h.category] = by_type.get(h.category, 0.0) + h.weight / total
+                mix_text = ", ".join(f"{t}: {w:.1%}" for t, w in by_type.items())
+
+                prompt = f"""Review this portfolio structure.
+
+Name: {name}
+Total holdings: {len(edited)}
+Asset-type mix: {mix_text}
+
+Holdings:
+{holdings_text}
+
+Respond as a markdown numbered list — one short sentence per point, no introduction, no final paragraph:
+1. Overall diversification — across asset classes, geography, and sectors.
+2. Concentration risks — any single holding or type too dominant?
+3. Overlap — do multiple holdings track the same thing (e.g. two S&P 500 ETFs)?
+4. What kind of investor this portfolio suits (growth / income / capital preservation).
+5. One honest caveat (hidden correlations, home-bias, missing asset classes, etc.).
+6. One constructive observation — what would make it more robust, without recommending specific tickers.
+
+Don't invent facts about any holding you don't recognise; just say "unfamiliar".
+"""
+                with st.container(border=True):
+                    _full = st.write_stream(ask_llm_stream(prompt))
+                st.session_state[_validate_key] = _full
+        else:
+            _stored = st.session_state.get(_validate_key)
+            if _stored:
+                with st.container(border=True):
+                    st.markdown(_stored)
+
+        if st.session_state.get(_validate_key):
+            st.button(
+                "Clear validation",
+                key=f"clear_portfolios_validate_{name}",
+                on_click=_pop_ss,
+                args=(_validate_key,),
+            )

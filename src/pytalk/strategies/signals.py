@@ -123,7 +123,22 @@ def _vwap_reversion(prices: pd.DataFrame, window: int = 20, k: float = 1.5) -> p
     return out
 
 
+def _buy_hold(prices: pd.DataFrame) -> pd.Series:
+    out = pd.Series(index=prices.index, dtype=object)
+    if len(prices) > 0:
+        out.iloc[0] = "B"
+    return out
+
+
+def _faber_trend(prices: pd.DataFrame, window: int = 200) -> pd.Series:
+    close = prices["close"]
+    sma_series = close.rolling(window).mean()
+    return _cross_signals(close, sma_series, prices.index)
+
+
 _SIGNALS = {
+    "Buy & Hold": _buy_hold,
+    "Faber Trend Filter": _faber_trend,
     "SMA Cross": _sma_cross,
     "MACD Cross": _macd_cross,
     "RSI Mean Reversion": _rsi_reversion,
