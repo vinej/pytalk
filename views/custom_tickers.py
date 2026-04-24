@@ -8,15 +8,7 @@ from pytalk.universe import CATEGORIES, CUSTOM_CATEGORY
 
 CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
 
-# Preserve widget state across page navigation.
-_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_", "clear_", "FormSubmitter")
-for _k in list(st.session_state.keys()):
-    if any(_h in _k for _h in _BUTTON_HINTS):
-        continue
-    try:
-        st.session_state[_k] = st.session_state[_k]
-    except Exception:
-        pass
+# Widget-state preservation is handled once in App.py.
 
 
 _REAL_CATS = [c for c in CATEGORIES if c != CUSTOM_CATEGORY]

@@ -50,6 +50,21 @@ if st.session_state.get("_current_user") != _user_email:
             pass
     st.session_state["_current_user"] = _user_email
 
+# Preserve widget state across page navigation. Runs on EVERY page render so
+# keys from views that aren't currently active (e.g. Analysis's `Source` radio
+# while you're on Info) don't get garbage-collected by Streamlit.
+_BUTTON_HINTS = (
+    "_rm_", "_back_", "_add", "_save", "_del_", "_explain",
+    "save_", "del_", "clear_", "FormSubmitter",
+)
+for _k in list(st.session_state.keys()):
+    if any(_h in _k for _h in _BUTTON_HINTS):
+        continue
+    try:
+        st.session_state[_k] = st.session_state[_k]
+    except Exception:
+        pass
+
 nav = st.navigation(
     [
         st.Page("views/brand.py", title="PyTalk", icon="📈", default=True),
