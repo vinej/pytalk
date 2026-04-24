@@ -1,27 +1,9 @@
+"""Portfolio storage — uses pytalk._storage (Turso cloud or DuckDB local)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-import duckdb
-
-from pytalk.data import DB_PATH
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS portfolios (
-    user_email VARCHAR NOT NULL,
-    name       VARCHAR NOT NULL,
-    created_at TIMESTAMP DEFAULT current_timestamp,
-    PRIMARY KEY (user_email, name)
-);
-CREATE TABLE IF NOT EXISTS portfolio_holdings (
-    user_email     VARCHAR NOT NULL,
-    portfolio_name VARCHAR NOT NULL,
-    ticker         VARCHAR NOT NULL,
-    category       VARCHAR NOT NULL,
-    weight         DOUBLE  NOT NULL DEFAULT 1.0,
-    PRIMARY KEY (user_email, portfolio_name, ticker)
-);
-"""
+from pytalk._storage import connect, current_backend_label, ensure_schema, write_tx
 
 
 @dataclass
@@ -43,18 +25,36 @@ class Portfolio:
         return {h.ticker: h.weight / total for h in self.holdings}
 
 
-def _connect() -> duckdb.DuckDBPyConnection:
-    con = duckdb.connect(str(DB_PATH))
-    # Migrate old (un-scoped) schema if present
-    try:
-        cols = {row[0] for row in con.execute("DESCRIBE portfolios").fetchall()}
-        if "user_email" not in cols:
-            con.execute("DROP TABLE IF EXISTS portfolio_holdings")
-            con.execute("DROP TABLE IF EXISTS portfolios")
-    except Exception:
-        pass  # tables don't exist yet — CREATE TABLE IF NOT EXISTS will handle it
-    con.execute(_SCHEMA)
+_SCHEMA_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS portfolios (
+        user_email TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_email, name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_holdings (
+        user_email     TEXT NOT NULL,
+        portfolio_name TEXT NOT NULL,
+        ticker         TEXT NOT NULL,
+        category       TEXT NOT NULL,
+        weight         REAL NOT NULL DEFAULT 1.0,
+        PRIMARY KEY (user_email, portfolio_name, ticker)
+    )
+    """,
+]
+
+
+def _connect():
+    con = connect()
+    ensure_schema(con, _SCHEMA_STATEMENTS)
     return con
+
+
+def current_db_label() -> str:
+    return current_backend_label()
 
 
 def _require_email(user_email: str) -> str:
@@ -69,7 +69,7 @@ def list_portfolios(user_email: str) -> list[str]:
     con = _connect()
     try:
         rows = con.execute(
-            "SELECT name FROM portfolios WHERE user_email = ? ORDER BY name", [e]
+            "SELECT name FROM portfolios WHERE user_email = ? ORDER BY name", (e,)
         ).fetchall()
         return [r[0] for r in rows]
     finally:
@@ -81,7 +81,8 @@ def get_portfolio(user_email: str, name: str) -> Portfolio | None:
     con = _connect()
     try:
         row = con.execute(
-            "SELECT name FROM portfolios WHERE user_email = ? AND name = ?", [e, name]
+            "SELECT name FROM portfolios WHERE user_email = ? AND name = ?",
+            (e, name),
         ).fetchone()
         if not row:
             return None
@@ -92,9 +93,12 @@ def get_portfolio(user_email: str, name: str) -> Portfolio | None:
             WHERE user_email = ? AND portfolio_name = ?
             ORDER BY ticker
             """,
-            [e, name],
+            (e, name),
         ).fetchall()
-        holdings = [Holding(ticker=t, category=c, weight=w) for t, c, w in holdings_rows]
+        holdings = [
+            Holding(ticker=t, category=c, weight=float(w))
+            for t, c, w in holdings_rows
+        ]
         return Portfolio(name=name, holdings=holdings)
     finally:
         con.close()
@@ -108,30 +112,30 @@ def save_portfolio(user_email: str, portfolio: Portfolio) -> None:
         raise ValueError("Portfolio must have at least one holding")
     con = _connect()
     try:
-        con.execute("BEGIN")
-        con.execute(
-            "INSERT INTO portfolios (user_email, name) VALUES (?, ?) "
-            "ON CONFLICT (user_email, name) DO NOTHING",
-            [e, portfolio.name],
-        )
-        con.execute(
-            "DELETE FROM portfolio_holdings "
-            "WHERE user_email = ? AND portfolio_name = ?",
-            [e, portfolio.name],
-        )
+        stmts: list[tuple[str, tuple]] = [
+            (
+                "INSERT INTO portfolios (user_email, name) VALUES (?, ?) "
+                "ON CONFLICT (user_email, name) DO NOTHING",
+                (e, portfolio.name),
+            ),
+            (
+                "DELETE FROM portfolio_holdings "
+                "WHERE user_email = ? AND portfolio_name = ?",
+                (e, portfolio.name),
+            ),
+        ]
         for h in portfolio.holdings:
-            con.execute(
-                """
-                INSERT INTO portfolio_holdings
-                    (user_email, portfolio_name, ticker, category, weight)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                [e, portfolio.name, h.ticker.upper(), h.category, float(h.weight)],
+            stmts.append(
+                (
+                    """
+                    INSERT INTO portfolio_holdings
+                        (user_email, portfolio_name, ticker, category, weight)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (e, portfolio.name, h.ticker.upper(), h.category, float(h.weight)),
+                )
             )
-        con.execute("COMMIT")
-    except Exception:
-        con.execute("ROLLBACK")
-        raise
+        write_tx(con, stmts)
     finally:
         con.close()
 
@@ -140,18 +144,19 @@ def delete_portfolio(user_email: str, name: str) -> None:
     e = _require_email(user_email)
     con = _connect()
     try:
-        con.execute("BEGIN")
-        con.execute(
-            "DELETE FROM portfolio_holdings "
-            "WHERE user_email = ? AND portfolio_name = ?",
-            [e, name],
+        write_tx(
+            con,
+            [
+                (
+                    "DELETE FROM portfolio_holdings "
+                    "WHERE user_email = ? AND portfolio_name = ?",
+                    (e, name),
+                ),
+                (
+                    "DELETE FROM portfolios WHERE user_email = ? AND name = ?",
+                    (e, name),
+                ),
+            ],
         )
-        con.execute(
-            "DELETE FROM portfolios WHERE user_email = ? AND name = ?", [e, name]
-        )
-        con.execute("COMMIT")
-    except Exception:
-        con.execute("ROLLBACK")
-        raise
     finally:
         con.close()

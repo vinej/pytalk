@@ -4,6 +4,7 @@ import uuid
 
 import streamlit as st
 
+from pytalk.custom_tickers import combined_label, combined_symbols
 from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
 from pytalk.portfolios import (
     Holding,
@@ -13,13 +14,16 @@ from pytalk.portfolios import (
     list_portfolios,
     save_portfolio,
 )
-from pytalk.universe import CATEGORIES, OTHER, UNIVERSE, label, tickers
+from pytalk.universe import CATEGORIES, CUSTOM_CATEGORY, OTHER, UNIVERSE, label, tickers
+
+# Portfolio holdings should have a real asset class, not the meta "Custom Ticker"
+_ROW_CATEGORIES = [c for c in CATEGORIES if c != CUSTOM_CATEGORY]
 
 CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
 
 # Preserve widget state across page navigation.
 # Skip keys that look like button widgets — Streamlit forbids re-assigning their state.
-_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_", "clear_")
+_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_", "clear_", "FormSubmitter")
 for _k in list(st.session_state.keys()):
     if any(_h in _k for _h in _BUTTON_HINTS):
         continue
@@ -37,11 +41,13 @@ def _pop_ss(key: str) -> None:
 
 
 def _blank_row() -> dict:
-    first_category = CATEGORIES[0]
+    default_category = "ETF" if "ETF" in CATEGORIES else CATEGORIES[0]
+    symbols = tickers(default_category)
+    default_ticker = "CASH.TO" if "CASH.TO" in symbols else (symbols[0] if symbols else "")
     return {
         "id": uuid.uuid4().hex,
-        "category": first_category,
-        "ticker": tickers(first_category)[0],
+        "category": default_category,
+        "ticker": default_ticker,
         "weight": 1.0,
         "custom": False,
     }
@@ -78,16 +84,17 @@ def _holdings_editor(state_key: str) -> list[Holding]:
         rid = row["id"]
         cols = st.columns([3, 5, 2, 1])
 
+        _cur = row["category"] if row["category"] in _ROW_CATEGORIES else _ROW_CATEGORIES[0]
         category = cols[0].selectbox(
             "Type",
-            CATEGORIES,
-            index=CATEGORIES.index(row["category"]),
+            _ROW_CATEGORIES,
+            index=_ROW_CATEGORIES.index(_cur),
             key=f"{state_key}_cat_{rid}",
             label_visibility="collapsed",
         )
         row["category"] = category
 
-        symbols = tickers(category)
+        symbols = combined_symbols(CURRENT_USER, category)
         # If stored ticker isn't in this category's list, treat row as custom.
         if row["ticker"] and row["ticker"] not in symbols:
             row["custom"] = True
@@ -114,7 +121,7 @@ def _holdings_editor(state_key: str) -> list[Holding]:
                 "Ticker",
                 options,
                 index=default_idx,
-                format_func=lambda s, c=category: label(c, s),
+                format_func=lambda s, c=category: combined_label(CURRENT_USER, c, s),
                 key=f"{state_key}_tkr_{rid}_{category}",
                 label_visibility="collapsed",
             )

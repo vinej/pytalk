@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 260" font-family="system-ui, sans-serif">
+  <!-- Back chat bubble: chart line (finance) -->
+  <rect x="15" y="25" width="140" height="110" rx="16" fill="#2563eb"/>
+  <path d="M30 135 L18 165 L70 135 Z" fill="#2563eb"/>
+  <!-- Subtle gridline -->
+  <line x1="30" y1="110" x2="140" y2="110"
+        stroke="#ffffff" stroke-width="0.6"
+        stroke-opacity="0.35" stroke-dasharray="2 3"/>
+  <!-- Upward trend line -->
+  <polyline points="30,100 55,80 80,87 110,58 140,38"
+            stroke="#ffffff" stroke-width="4"
+            fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="140" cy="38" r="5" fill="#10b981"/>
+
+  <!-- Front chat bubble: percentage gain — wider/taller for more padding -->
+  <rect x="40" y="140" width="150" height="90" rx="14"
+        fill="#ffffff" stroke="#2563eb" stroke-width="3"/>
+  <path d="M170 230 L190 252 L155 230 Z"
+        fill="#ffffff" stroke="#2563eb" stroke-width="3"/>
+  <text x="115" y="195" font-size="26" font-weight="700"
+        fill="#10b981" text-anchor="middle">+12.4%</text>
+</svg>

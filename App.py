@@ -4,14 +4,12 @@ import logging
 
 import streamlit as st
 
-from pytalk.llm import current_model_label
-
 # Silence the benign "widget created with default value but also had its value
 # set via Session State API" warning — triggered by our cross-page preservation
 # loop. The widgets still work correctly (session-state wins, default is ignored).
 logging.getLogger("streamlit.elements.lib.policies").setLevel(logging.ERROR)
 
-st.set_page_config(page_title="pytalk", layout="wide")
+st.set_page_config(page_title="PyTalk", page_icon="assets/favicon.svg", layout="wide")
 
 
 def _allowed_emails() -> set[str]:
@@ -21,7 +19,7 @@ def _allowed_emails() -> set[str]:
 
 # ── Auth gate ────────────────────────────────────────────────────────────────
 if not st.user.is_logged_in:
-    st.title("pytalk")
+    st.title("PyTalk")
     st.caption(
         "Family-only access. Sign in with your Microsoft / Hotmail / Outlook account."
     )
@@ -52,17 +50,24 @@ if st.session_state.get("_current_user") != _user_email:
             pass
     st.session_state["_current_user"] = _user_email
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
-st.sidebar.caption(f"🧠 Powered by {current_model_label()}")
-st.sidebar.caption(f"Signed in as {_user_email}")
-st.sidebar.button("Sign out", on_click=st.logout)
-
 nav = st.navigation(
     [
-        st.Page("views/analysis.py", title="Analysis", default=True),
+        st.Page("views/brand.py", title="PyTalk", icon="📈", default=True),
+        st.Page("views/analysis.py", title="Analysis"),
         st.Page("views/portfolios.py", title="Portfolios"),
+        st.Page("views/custom_tickers.py", title="Custom Tickers"),
         st.Page("views/screener.py", title="Screener"),
         st.Page("views/learning.py", title="Learning"),
-    ]
+        st.Page("views/info.py", title="Info"),
+        st.Page("views/logout.py", title="Logout", icon=":material/logout:"),
+    ],
+    position="top",
 )
+
+# Show the sidebar illustration on pages that don't fill the sidebar with
+# their own widgets — keeps the panel open and adds a nice brand touch.
+_PAGES_WITH_SIDEBAR_WIDGETS = {"Analysis", "Screener"}
+if nav.title not in _PAGES_WITH_SIDEBAR_WIDGETS:
+    st.sidebar.image("assets/sidebar-art.svg", width=180)
+
 nav.run()

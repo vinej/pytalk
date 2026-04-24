@@ -75,6 +75,32 @@ def get_currency(ticker: str) -> str:
         return ""
 
 
+def detect_category(ticker: str) -> str:
+    """Infer a pytalk category from yfinance's quoteType. Falls back to 'Stock'.
+
+    Mapping:
+      EQUITY / MUTUALFUND-without-ETF-traits → Stock (equity)
+      ETF / MUTUALFUND                       → ETF
+      CRYPTOCURRENCY                         → Crypto
+      INDEX                                  → Index
+      FUTURE / CURRENCY                      → Commodity
+    """
+    try:
+        info = yf.Ticker(ticker).info
+        qtype = (info.get("quoteType") or "").upper()
+    except Exception:
+        return "Stock"
+    return {
+        "EQUITY": "Stock",
+        "ETF": "ETF",
+        "MUTUALFUND": "ETF",
+        "CRYPTOCURRENCY": "Crypto",
+        "INDEX": "Index",
+        "FUTURE": "Commodity",
+        "CURRENCY": "Commodity",
+    }.get(qtype, "Stock")
+
+
 def get_prices(ticker: str, start: date, end: date, *, use_cache: bool = True) -> pd.DataFrame:
     """Return OHLCV for ticker in [start, end], fetching and caching missing days."""
     ticker = ticker.upper()

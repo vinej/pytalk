@@ -13,7 +13,13 @@ from pytalk import (
     run_portfolio_backtest,
     run_portfolio_buy_hold,
 )
-from pytalk.data import get_currency
+from pytalk.custom_tickers import (
+    add_ticker,
+    combined_label,
+    combined_symbols,
+    lookup_name,
+)
+from pytalk.data import detect_category, get_currency
 from pytalk.indicators import rsi
 from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
 from pytalk.portfolios import get_portfolio, list_portfolios
@@ -26,7 +32,7 @@ CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().
 
 # Preserve widget state across page navigation.
 # Skip keys that look like button widgets — Streamlit forbids re-assigning their state.
-_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_", "clear_")
+_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_", "clear_", "FormSubmitter")
 for _k in list(st.session_state.keys()):
     if any(_h in _k for _h in _BUTTON_HINTS):
         continue
@@ -56,14 +62,20 @@ with st.sidebar:
         category = st.selectbox(
             "Type",
             CATEGORIES,
-            index=CATEGORIES.index("Stock"),
+            index=CATEGORIES.index("ETF"),
             key="analysis_category",
         )
-        options = tickers(category) + [OTHER]
+        _symbols = combined_symbols(CURRENT_USER, category)
+        options = _symbols + [OTHER]
+        _default_ticker = (
+            "CASH.TO" if category == "ETF" and "CASH.TO" in _symbols else _symbols[0]
+        )
+        _default_idx = _symbols.index(_default_ticker) if _default_ticker in _symbols else 0
         choice = st.selectbox(
             "Ticker",
             options,
-            format_func=lambda s: label(category, s),
+            index=_default_idx,
+            format_func=lambda s: combined_label(CURRENT_USER, category, s),
             key=f"analysis_ticker_{category}",
         )
         if choice == OTHER:
@@ -130,6 +142,11 @@ is_portfolio = source == "Portfolio"
 @st.cache_data(ttl=86400, show_spinner=False)
 def _currency_for(tkr: str) -> str:
     return get_currency(tkr)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _detect_category_cached(tkr: str) -> str:
+    return detect_category(tkr)
 
 
 def _build_portfolio_series(
@@ -202,8 +219,21 @@ else:
         st.error(f"No data for {ticker} in the selected range.")
         st.stop()
 
+    # Auto-save a freshly-typed custom ticker under its REAL category (detected
+    # via yfinance's quoteType), not whatever Type the user had selected. Guarded
+    # so the DB write only happens once per session per ticker.
+    if choice == OTHER and ticker:
+        _saved_marker = f"_saved_custom::{CURRENT_USER}::{ticker}"
+        if _saved_marker not in st.session_state:
+            try:
+                _real_cat = _detect_category_cached(ticker)
+                add_ticker(CURRENT_USER, _real_cat, ticker, name="")
+                st.session_state[_saved_marker] = True
+            except Exception:
+                pass  # silent — UX nicety, not critical
+
     _currency = _currency_for(ticker)
-    _name = UNIVERSE.get(category, {}).get(ticker, "")
+    _name = lookup_name(CURRENT_USER, category, ticker)
     _title = f"Technical analysis for {ticker}"
     if _name:
         _title += f" - {_name}"
@@ -222,14 +252,11 @@ with st.spinner("Loading past performance…"):
         perf_prices = get_prices(ticker, _perf_start, end)
 
 
-def _ret_color(ret: float | None) -> str:
-    if ret is None:
-        return ""
-    if ret > 0:
-        return "color:#2ca02c;"
-    if ret < 0:
-        return "color:#d62728;"
-    return ""
+def _colored(value: str, ret: float | None) -> str:
+    """Wrap a value in Streamlit's native color markdown based on sign."""
+    if ret is None or ret == 0:
+        return value
+    return f":green[{value}]" if ret > 0 else f":red[{value}]"
 
 
 def _compact_metric(
@@ -240,15 +267,9 @@ def _compact_metric(
     tr_ret: float | None = None,
     pr_ret: float | None = None,
 ) -> None:
+    col.caption(label)
     col.markdown(
-        f'<div style="text-align:center; padding:0.15em 0;">'
-        f'<div style="font-size:0.72em; color:#666;">{label}</div>'
-        f'<div style="font-size:0.85em; font-weight:600; {_ret_color(tr_ret)}">'
-        f'<span style="color:#999; font-weight:400;">TR</span> {tr_value}</div>'
-        f'<div style="font-size:0.85em; font-weight:500; {_ret_color(pr_ret)}">'
-        f'<span style="color:#999; font-weight:400;">PR</span> {pr_value}</div>'
-        f"</div>",
-        unsafe_allow_html=True,
+        f"TR {_colored(tr_value, tr_ret)}  \nPR {_colored(pr_value, pr_ret)}"
     )
 
 
@@ -477,18 +498,10 @@ for ind in indicators[:3]:
     value = ind.series.dropna()
     metrics.append((ind.name, f"{value.iloc[-1]:.2f}" if not value.empty else "—"))
 with st.container(border=True):
-    _parts = [
-        '<div style="display:flex; gap:2.5em; padding:0.2em 0.4em; flex-wrap:wrap;">'
-    ]
-    for name, value in metrics:
-        _parts.append(
-            '<div style="text-align:left;">'
-            f'<div style="font-size:0.75em; color:#888;">{name}</div>'
-            f'<div style="font-size:1em; font-weight:600;">{value}</div>'
-            "</div>"
-        )
-    _parts.append("</div>")
-    st.markdown("".join(_parts), unsafe_allow_html=True)
+    _mcols = st.columns(len(metrics))
+    for _mcol, (_mname, _mvalue) in zip(_mcols, metrics):
+        _mcol.caption(_mname)
+        _mcol.markdown(f"**{_mvalue}**")
 
 has_sub = bool(sub_indicators)
 price_label = "Portfolio value" if is_portfolio else "Price"

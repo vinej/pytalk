@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Chat bubble: rounded rect + tail -->
+  <rect x="3" y="3" width="58" height="48" rx="10" fill="#2563eb"/>
+  <path d="M14 51 L9 60 L22 51 Z" fill="#2563eb"/>
+  <!-- Upward trend line -->
+  <polyline points="14,38 26,30 38,34 52,18"
+            stroke="#ffffff" stroke-width="4"
+            fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- End-point marker (green = up) -->
+  <circle cx="52" cy="18" r="4" fill="#10b981"/>
+</svg>

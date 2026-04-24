@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+CUSTOM_CATEGORY = "Custom Ticker"
+
 UNIVERSE: dict[str, dict[str, str]] = {
+    CUSTOM_CATEGORY: {},  # populated per-user via custom_tickers (meta-category)
     "Stock": {
         "AAPL": "Apple",
         "MSFT": "Microsoft",
@@ -292,7 +295,8 @@ UNIVERSE: dict[str, dict[str, str]] = {
     },
 }
 
-CATEGORIES = list(UNIVERSE.keys())
+_OTHER_CATS = sorted(k for k in UNIVERSE if k != CUSTOM_CATEGORY)
+CATEGORIES = [CUSTOM_CATEGORY, *_OTHER_CATS]
 OTHER = "Other…"
 
 

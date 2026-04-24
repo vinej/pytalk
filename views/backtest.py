@@ -14,7 +14,7 @@ from pytalk.universe import CATEGORIES, OTHER, label, tickers
 
 # Preserve widget state across page navigation.
 # Skip keys that look like button widgets — Streamlit forbids re-assigning their state.
-_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_")
+_BUTTON_HINTS = ("_rm_", "_back_", "_add", "_save", "_del_", "_explain", "save_", "del_", "clear_", "FormSubmitter")
 for _k in list(st.session_state.keys()):
     if any(_h in _k for _h in _BUTTON_HINTS):
         continue
