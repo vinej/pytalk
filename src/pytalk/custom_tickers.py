@@ -186,6 +186,8 @@ def combined_symbols(user_email: str, category: str) -> list[str]:
 
 def combined_label(user_email: str, category: str, symbol: str) -> str:
     if symbol == OTHER:
-        return OTHER
+        from pytalk.i18n import other_label  # noqa: PLC0415 — lazy to avoid cycles
+
+        return other_label()
     name = combined_map(user_email, category).get(symbol, "")
     return f"{symbol} — {name}" if name else symbol

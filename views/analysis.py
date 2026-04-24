@@ -20,6 +20,7 @@ from pytalk.custom_tickers import (
     lookup_name,
 )
 from pytalk.data import detect_category, get_currency
+from pytalk.i18n import category_label, t
 from pytalk.indicators import rsi
 from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
 from pytalk.portfolios import get_portfolio, list_portfolios
@@ -30,15 +31,28 @@ from pytalk.universe import CATEGORIES, OTHER, UNIVERSE, label, tickers
 
 CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
 
+_SOURCE_LABELS = {
+    "Single ticker": "common.source_single",
+    "Portfolio": "common.source_portfolio",
+}
+_REB_LABELS = {
+    "None (drift)": "common.reb_none",
+    "Monthly": "common.reb_monthly",
+    "Quarterly": "common.reb_quarterly",
+    "Yearly": "common.reb_yearly",
+}
+
+
 def _pop_ss(key: str) -> None:
     """Callback helper — drops a session_state key before Streamlit's auto-rerun."""
     st.session_state.pop(key, None)
 
 with st.sidebar:
     source = st.radio(
-        "Source",
+        t("common.source"),
         ["Single ticker", "Portfolio"],
         horizontal=True,
+        format_func=lambda s: t(_SOURCE_LABELS[s]),
         key="analysis_source",
     )
 
@@ -48,9 +62,10 @@ with st.sidebar:
 
     if source == "Single ticker":
         category = st.selectbox(
-            "Type",
+            t("common.type"),
             CATEGORIES,
             index=CATEGORIES.index("ETF"),
+            format_func=category_label,
             key="analysis_category",
         )
         _symbols = combined_symbols(CURRENT_USER, category)
@@ -60,7 +75,7 @@ with st.sidebar:
         )
         _default_idx = _symbols.index(_default_ticker) if _default_ticker in _symbols else 0
         choice = st.selectbox(
-            "Ticker",
+            t("common.ticker"),
             options,
             index=_default_idx,
             format_func=lambda s: combined_label(CURRENT_USER, category, s),
@@ -68,8 +83,8 @@ with st.sidebar:
         )
         if choice == OTHER:
             ticker = st.text_input(
-                "Custom ticker",
-                placeholder="e.g. NESN.SW, 0700.HK",
+                t("common.custom_ticker"),
+                placeholder=t("common.ticker_placeholder"),
                 key="analysis_custom_ticker",
             ).strip().upper()
         else:
@@ -77,43 +92,44 @@ with st.sidebar:
     else:
         portfolio_names = list_portfolios(CURRENT_USER)
         if not portfolio_names:
-            st.warning("No portfolios yet. Create one on the Portfolios page.")
+            st.warning(t("common.no_portfolios"))
         else:
             portfolio_name = st.selectbox(
-                "Portfolio", portfolio_names, key="analysis_portfolio"
+                t("common.portfolio"), portfolio_names, key="analysis_portfolio"
             )
 
     lookback_days = st.slider(
-        "Lookback (days)", 30, 1825, 365, key="analysis_lookback"
+        t("common.lookback"), 30, 1825, 365, key="analysis_lookback"
     )
-    end = st.date_input("End date", value=date.today(), key="analysis_end")
+    end = st.date_input(t("common.end_date"), value=date.today(), key="analysis_end")
     start = end - timedelta(days=lookback_days)
     strategy_name = st.selectbox(
-        "Strategy",
+        t("common.strategy"),
         list(STRATEGIES.keys()),
         key="analysis_strategy",
     )
     show_indicators = st.checkbox(
-        "Show indicators", value=True, key="analysis_show_indicators"
+        t("common.show_indicators"), value=True, key="analysis_show_indicators"
     )
 
     st.divider()
     cash = st.number_input(
-        "Starting cash",
+        t("common.starting_cash"),
         min_value=1_000,
         value=10_000,
         step=1_000,
         key="analysis_cash",
     )
     commission_bps = st.number_input(
-        "Commission (bps per trade)", 0, 100, 20, key="analysis_commission"
+        t("common.commission_bps"), 0, 100, 20, key="analysis_commission"
     )
     rebalance_freq = "none"
     if source == "Portfolio" and strategy_name == "Buy & Hold":
         _reb_label = st.selectbox(
-            "Rebalance frequency",
+            t("common.rebalance_freq"),
             ["None (drift)", "Monthly", "Quarterly", "Yearly"],
             index=2,
+            format_func=lambda s: t(_REB_LABELS[s]),
             key="analysis_reb_freq",
         )
         rebalance_freq = {
@@ -122,7 +138,7 @@ with st.sidebar:
             "Quarterly": "Q",
             "Yearly": "Y",
         }[_reb_label]
-    run_bt = st.button("🧪 Run backtest", type="primary")
+    run_bt = st.button(t("common.run_backtest"), type="primary")
 
 is_portfolio = source == "Portfolio"
 
@@ -178,33 +194,32 @@ def _build_portfolio_series(
 
 if is_portfolio:
     if not portfolio_name:
-        st.info("Pick a portfolio to begin.")
+        st.info(t("common.pick_portfolio"))
         st.stop()
     portfolio = get_portfolio(CURRENT_USER, portfolio_name)
     if portfolio is None or not portfolio.holdings:
-        st.error(f"Portfolio “{portfolio_name}” has no holdings.")
+        st.error(t("common.no_holdings", name=portfolio_name))
         st.stop()
     weights_norm = portfolio.normalized_weights()
-    with st.spinner(f"Building “{portfolio_name}” series…"):
+    with st.spinner(t("analysis.building_series", name=portfolio_name)):
         df = _build_portfolio_series(weights_norm, start, end)
     if df.empty:
-        st.error("No overlapping price data across the portfolio's holdings.")
+        st.error(t("analysis.no_overlap"))
         st.stop()
-    _title = f"Technical analysis for portfolio “{portfolio_name}”"
-    st.title(_title)
+    st.title(t("analysis.title_portfolio", name=portfolio_name))
     st.caption(
-        "Weighted buy-and-hold equity curve (rebased to 100 at range start). "
-        + ", ".join(f"{t}: {w:.1%}" for t, w in weights_norm.items())
+        t("analysis.caption_portfolio")
+        + ", ".join(f"{tk}: {w:.1%}" for tk, w in weights_norm.items())
     )
 
 else:
     if not ticker:
-        st.info("Pick a ticker to begin.")
+        st.info(t("common.pick_ticker"))
         st.stop()
-    with st.spinner(f"Loading {ticker}…"):
+    with st.spinner(t("common.loading", name=ticker)):
         df = get_prices(ticker, start, end)
     if df.empty:
-        st.error(f"No data for {ticker} in the selected range.")
+        st.error(t("common.no_data_range", ticker=ticker))
         st.stop()
 
     # Auto-save a freshly-typed custom ticker under its REAL category (detected
@@ -222,7 +237,7 @@ else:
 
     _currency = _currency_for(ticker)
     _name = lookup_name(CURRENT_USER, category, ticker)
-    _title = f"Technical analysis for {ticker}"
+    _title = t("analysis.title_ticker", ticker=ticker)
     if _name:
         _title += f" - {_name}"
     if _currency:
@@ -233,7 +248,7 @@ PERF_PERIODS = [("6m", 6), ("1y", 12), ("2y", 24), ("5y", 60), ("10y", 120)]
 _perf_start = (
     pd.Timestamp(end) - pd.DateOffset(months=PERF_PERIODS[-1][1])
 ).date() - timedelta(days=30)
-with st.spinner("Loading past performance…"):
+with st.spinner(t("analysis.loading_perf")):
     if is_portfolio:
         perf_prices = _build_portfolio_series(weights_norm, _perf_start, end)
     else:
@@ -261,13 +276,10 @@ def _compact_metric(
     )
 
 
-st.subheader("Past performance")
-st.caption(
-    "**TR** = Total Return (price + reinvested dividends, retirement-relevant). "
-    "**PR** = Price Return (split-adjusted, no dividends — matches Yahoo/Google)."
-)
+st.subheader(t("analysis.past_perf"))
+st.caption(t("analysis.past_perf_caption"))
 if perf_prices.empty or len(perf_prices) < 2:
-    st.caption("No historical data available.")
+    st.caption(t("analysis.no_history"))
 else:
     current_pr = float(perf_prices["close"].iloc[-1])
     current_tr = float(perf_prices["adj_close"].iloc[-1])
@@ -306,7 +318,7 @@ else:
         )
         before_start = perf_prices.loc[:start_ts]
         before_end = perf_prices.loc[:end_ts]
-        year_label = f"{y} YTD" if y == end.year else str(y)
+        year_label = t("analysis.ytd", year=y) if y == end.year else str(y)
         if before_start.empty or before_end.empty:
             _compact_metric(year_cols[i], year_label, "—", "—")
             continue
@@ -330,7 +342,7 @@ else:
 
 if is_portfolio and not perf_prices.empty and len(perf_prices) >= 2:
     _validate_key = f"_analysis_validate_{portfolio_name}"
-    if st.button("🧠 Validate portfolio"):
+    if st.button(t("analysis.validate_btn")):
         if not llm_available():
             st.error(unavailable_message())
         else:
@@ -339,7 +351,7 @@ if is_portfolio and not perf_prices.empty and len(perf_prices) >= 2:
                 _by_type[_h.category] = (
                     _by_type.get(_h.category, 0.0) + weights_norm[_h.ticker]
                 )
-            _mix_text = ", ".join(f"{t}: {w:.1%}" for t, w in _by_type.items())
+            _mix_text = ", ".join(f"{tk}: {w:.1%}" for tk, w in _by_type.items())
             _holdings_text = "\n".join(
                 f"  - {_h.ticker} ({_h.category}) "
                 f"[{UNIVERSE.get(_h.category, {}).get(_h.ticker) or 'custom'}] — "
@@ -376,7 +388,7 @@ Don't invent facts about any holding you don't recognise; just say "unfamiliar".
 
     if st.session_state.get(_validate_key):
         st.button(
-            "Clear validation",
+            t("analysis.clear_validation"),
             key=f"clear_analysis_validate_{portfolio_name}",
             on_click=_pop_ss,
             args=(_validate_key,),
@@ -384,7 +396,7 @@ Don't invent facts about any holding you don't recognise; just say "unfamiliar".
 
 elif not is_portfolio and not perf_prices.empty and len(perf_prices) >= 2:
     _describe_key = f"_analysis_describe_{ticker}"
-    if st.button("🧠 Describe current state"):
+    if st.button(t("analysis.describe_btn")):
         if not llm_available():
             st.error(unavailable_message())
         else:
@@ -471,7 +483,7 @@ Respond as a markdown numbered list - one short sentence per point, no introduct
 
     if st.session_state.get(_describe_key):
         st.button(
-            "Clear snapshot",
+            t("analysis.clear_snapshot"),
             key=f"clear_analysis_describe_{ticker}",
             on_click=_pop_ss,
             args=(_describe_key,),
@@ -492,7 +504,7 @@ with st.container(border=True):
         _mcol.markdown(f"**{_mvalue}**")
 
 has_sub = bool(sub_indicators)
-price_label = "Portfolio value" if is_portfolio else "Price"
+price_label = t("analysis.portfolio_value") if is_portfolio else t("analysis.price")
 
 if is_portfolio:
     rows = 2 if has_sub else 1
@@ -501,7 +513,7 @@ if is_portfolio:
 else:
     rows = 3 if has_sub else 2
     row_heights = [0.65, 0.2, 0.15] if has_sub else [0.8, 0.2]
-    subplot_titles = [price_label, "Volume"] + ([strategy_name] if has_sub else [])
+    subplot_titles = [price_label, t("analysis.volume")] + ([strategy_name] if has_sub else [])
 
 fig = make_subplots(
     rows=rows,
@@ -558,8 +570,8 @@ if show_indicators:
                 text=["B"] * len(buys),
                 textposition="bottom center",
                 textfont=dict(color="black", size=16, family="Arial Black"),
-                name="Buy",
-                hovertemplate="Buy<br>%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
+                name=t("analysis.buy"),
+                hovertemplate=t("analysis.buy") + "<br>%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
             ),
             row=1,
             col=1,
@@ -574,15 +586,15 @@ if show_indicators:
                 text=["S"] * len(sells),
                 textposition="top center",
                 textfont=dict(color="black", size=16, family="Arial Black"),
-                name="Sell",
-                hovertemplate="Sell<br>%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
+                name=t("analysis.sell"),
+                hovertemplate=t("analysis.sell") + "<br>%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
             ),
             row=1,
             col=1,
         )
 
 if not is_portfolio:
-    fig.add_trace(go.Bar(x=df.index, y=df["volume"], name="Volume"), row=2, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df["volume"], name=t("analysis.volume")), row=2, col=1)
 
 if has_sub:
     sub_row = 2 if is_portfolio else 3
@@ -605,7 +617,7 @@ commission_frac = commission_bps / 10_000
 
 if run_bt:
     if is_portfolio:
-        with st.spinner("Running portfolio backtest…"):
+        with st.spinner(t("analysis.running_portfolio")):
             prices_by_ticker: dict[str, pd.DataFrame] = {}
             weights_raw: dict[str, float] = {}
             for h in portfolio.holdings:
@@ -638,7 +650,7 @@ if run_bt:
             except ValueError as e:
                 st.error(str(e))
     else:
-        with st.spinner(f"Running backtest on {ticker}…"):
+        with st.spinner(t("analysis.running_ticker", ticker=ticker)):
             try:
                 bt_result = run_backtest(
                     df, strategy_class, cash=float(cash), commission=commission_frac
@@ -651,7 +663,7 @@ if run_bt:
                     "result": bt_result,
                 }
             except Exception as e:
-                st.error(f"Backtest failed: {e}")
+                st.error(t("analysis.bt_failed", error=e))
 
 _snap = st.session_state.get("_analysis_bt")
 if _snap is not None:
@@ -666,39 +678,39 @@ if _snap is not None:
         st.divider()
         _bt_strategy = _snap["strategy_name"]
         if _snap["mode"] == "Single ticker":
-            st.subheader(f"Backtest — {_snap['ticker']} with {_bt_strategy}")
+            st.subheader(t("analysis.bt_title_ticker", ticker=_snap['ticker'], strategy=_bt_strategy))
             _res = _snap["result"]
             _stats = _res.stats
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Return", f"{_stats['Return [%]']:.2f}%")
-            c2.metric("Buy & Hold", f"{_stats['Buy & Hold Return [%]']:.2f}%")
-            c3.metric("Sharpe", f"{_stats['Sharpe Ratio']:.2f}")
-            c4.metric("Max Drawdown", f"{_stats['Max. Drawdown [%]']:.2f}%")
+            c1.metric(t("analysis.metric_return"), f"{_stats['Return [%]']:.2f}%")
+            c2.metric(t("analysis.metric_bh"), f"{_stats['Buy & Hold Return [%]']:.2f}%")
+            c3.metric(t("analysis.metric_sharpe"), f"{_stats['Sharpe Ratio']:.2f}")
+            c4.metric(t("analysis.metric_mdd"), f"{_stats['Max. Drawdown [%]']:.2f}%")
 
             _eq = _res.equity_curve
             _fig = go.Figure()
-            _fig.add_trace(go.Scatter(x=_eq.index, y=_eq["Equity"], name="Equity"))
+            _fig.add_trace(go.Scatter(x=_eq.index, y=_eq["Equity"], name=t("analysis.equity_label")))
             _fig.add_trace(
                 go.Scatter(
                     x=_eq.index,
                     y=_eq["DrawdownPct"] * 100,
-                    name="Drawdown %",
+                    name=t("analysis.drawdown_label"),
                     yaxis="y2",
                 )
             )
             _fig.update_layout(
                 height=400,
-                yaxis=dict(title="Equity"),
-                yaxis2=dict(title="Drawdown %", overlaying="y", side="right"),
+                yaxis=dict(title=t("analysis.equity_label")),
+                yaxis2=dict(title=t("analysis.drawdown_label"), overlaying="y", side="right"),
             )
             st.plotly_chart(_fig, width="stretch")
 
-            with st.expander("Trades"):
+            with st.expander(t("analysis.trades")):
                 st.dataframe(_res.trades)
-            with st.expander("Full stats"):
+            with st.expander(t("analysis.full_stats")):
                 st.dataframe(_stats.astype(str).to_frame("value"))
 
-            if st.button("🧠 Explain this result"):
+            if st.button(t("analysis.explain_btn")):
                 if not llm_available():
                     st.error(unavailable_message())
                 else:
@@ -730,7 +742,7 @@ Respond as a markdown numbered list — one short sentence per point, no introdu
 
             if st.session_state.get("_analysis_explain"):
                 st.button(
-                    "Clear explanation",
+                    t("analysis.clear_explain"),
                     key="clear_analysis_explain_single",
                     on_click=_pop_ss,
                     args=("_analysis_explain",),
@@ -741,32 +753,30 @@ Respond as a markdown numbered list — one short sentence per point, no introdu
             if _bt_strategy == "Buy & Hold" and _snap.get("rebalance_freq") != "none":
                 _title_suffix += f" (rebalance: {_snap['rebalance_freq']})"
             st.subheader(
-                f"Backtest — portfolio “{_snap['portfolio_name']}” with {_title_suffix}"
+                t("analysis.bt_title_portfolio", name=_snap['portfolio_name'], strategy=_title_suffix)
             )
             _res = _snap["result"]
             if _res.skipped:
-                st.warning(
-                    "Skipped (no data or failed backtest): " + ", ".join(_res.skipped)
-                )
+                st.warning(t("analysis.skipped", list=", ".join(_res.skipped)))
             _stats = _res.stats
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Return", f"{_stats['Return [%]']:.2f}%")
-            c2.metric("Sharpe", f"{_stats['Sharpe Ratio']:.2f}")
-            c3.metric("Max Drawdown", f"{_stats['Max. Drawdown [%]']:.2f}%")
-            c4.metric("Final Equity", f"{_stats['Final Equity']:,.0f}")
+            c1.metric(t("analysis.metric_return"), f"{_stats['Return [%]']:.2f}%")
+            c2.metric(t("analysis.metric_sharpe"), f"{_stats['Sharpe Ratio']:.2f}")
+            c3.metric(t("analysis.metric_mdd"), f"{_stats['Max. Drawdown [%]']:.2f}%")
+            c4.metric(t("analysis.metric_final_eq"), f"{_stats['Final Equity']:,.0f}")
 
             _eq = _res.equity
             _roll_max = _eq.cummax()
             _dd = ((_eq / _roll_max) - 1) * 100
             _fig = go.Figure()
-            _fig.add_trace(go.Scatter(x=_eq.index, y=_eq.values, name="Equity"))
+            _fig.add_trace(go.Scatter(x=_eq.index, y=_eq.values, name=t("analysis.equity_label")))
             _fig.add_trace(
-                go.Scatter(x=_eq.index, y=_dd.values, name="Drawdown %", yaxis="y2")
+                go.Scatter(x=_eq.index, y=_dd.values, name=t("analysis.drawdown_label"), yaxis="y2")
             )
             _fig.update_layout(
                 height=400,
-                yaxis=dict(title="Equity"),
-                yaxis2=dict(title="Drawdown %", overlaying="y", side="right"),
+                yaxis=dict(title=t("analysis.equity_label")),
+                yaxis2=dict(title=t("analysis.drawdown_label"), overlaying="y", side="right"),
             )
             st.plotly_chart(_fig, width="stretch")
 
@@ -787,10 +797,10 @@ Respond as a markdown numbered list — one short sentence per point, no introdu
                             "# Trades": int(s.get("# Trades", 0)),
                         }
                     )
-                with st.expander("Per-ticker results"):
+                with st.expander(t("analysis.per_ticker_results")):
                     st.dataframe(pd.DataFrame(per_rows), width="stretch")
 
-            if st.button("🧠 Explain this result"):
+            if st.button(t("analysis.explain_btn")):
                 if not llm_available():
                     st.error(unavailable_message())
                 else:
@@ -830,11 +840,11 @@ Respond as a markdown numbered list — one short sentence per point, no introdu
 
             if st.session_state.get("_analysis_explain"):
                 st.button(
-                    "Clear explanation",
+                    t("analysis.clear_explain"),
                     key="clear_analysis_explain_portfolio",
                     on_click=_pop_ss,
                     args=("_analysis_explain",),
                 )
 
-with st.expander("Raw data"):
+with st.expander(t("analysis.raw_data")):
     st.dataframe(df.tail(100))

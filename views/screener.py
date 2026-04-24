@@ -7,12 +7,13 @@ import pandas as pd
 import streamlit as st
 
 from pytalk import get_prices
+from pytalk.i18n import category_label, t
 from pytalk.indicators import rsi, sma
 from pytalk.universe import CATEGORIES, UNIVERSE
 
 # Widget-state preservation is handled once in App.py.
 
-st.title("Screener")
+st.title(t("screener.title"))
 
 PERIODS = {"6m": 6, "1y": 12, "2y": 24, "5y": 60, "10y": 120}
 MAX_LOOKBACK_MONTHS = PERIODS["10y"]
@@ -87,7 +88,14 @@ def _run_screen(categories: list[str], end: date) -> pd.DataFrame:
     progress = st.progress(0.0)
     status = st.empty()
     for i, (ticker, category) in enumerate(universe_items):
-        status.caption(f"Loading {ticker}… ({i + 1}/{len(universe_items)})")
+        status.caption(
+            t(
+                "screener.loading_item",
+                ticker=ticker,
+                i=i + 1,
+                total=len(universe_items),
+            )
+        )
         row = _compute_row(ticker, category, end)
         if row is not None:
             rows.append(row)
@@ -100,17 +108,21 @@ def _run_screen(categories: list[str], end: date) -> pd.DataFrame:
 
 with st.sidebar:
     categories = st.multiselect(
-        "Types", CATEGORIES, default=["ETF"], key="screener_categories"
+        t("screener.types"),
+        CATEGORIES,
+        default=["ETF"],
+        format_func=category_label,
+        key="screener_categories",
     )
-    end = st.date_input("End date", value=date.today(), key="screener_end")
-    run = st.button("Run screener", type="primary")
-    if st.button("Clear results"):
+    end = st.date_input(t("common.end_date"), value=date.today(), key="screener_end")
+    run = st.button(t("screener.run"), type="primary")
+    if st.button(t("common.clear_results")):
         st.session_state.pop("_screener_df", None)
         st.rerun()
 
 if run:
     if not categories:
-        st.warning("Pick at least one type.")
+        st.warning(t("screener.pick_type"))
         st.stop()
     df = _run_screen(categories, end)
     st.session_state["_screener_df"] = df
@@ -121,26 +133,26 @@ if run:
     }
 
 if "_screener_df" not in st.session_state:
-    st.info(
-        "Pick one or more types in the sidebar and click **Run screener**. "
-        "The first run fetches up to 10 years of prices and may take a few minutes; "
-        "subsequent runs hit the local cache and are instant."
-    )
+    st.info(t("screener.intro"))
     st.stop()
 
 df: pd.DataFrame = st.session_state["_screener_df"]
 meta = st.session_state.get("_screener_meta", {})
 
 if df.empty:
-    st.warning("No data for the selected types.")
+    st.warning(t("screener.no_data"))
     st.stop()
 
 st.caption(
-    f"Loaded {meta.get('count', len(df))} tickers across "
-    f"{', '.join(meta.get('categories', []))} — end date {meta.get('end', end)}."
+    t(
+        "screener.loaded",
+        count=meta.get("count", len(df)),
+        cats=", ".join(category_label(c) for c in meta.get("categories", [])),
+        end=meta.get("end", end),
+    )
 )
 
-st.subheader("Filters")
+st.subheader(t("screener.filters"))
 
 
 def _range_filter(
@@ -178,7 +190,7 @@ def _range_filter(
     st.markdown(f"**{label}**")
     c1, c2 = st.columns(2)
     c1.number_input(
-        "Min",
+        t("screener.min"),
         min_value=float(lo_bound),
         max_value=float(hi_bound),
         step=float(step),
@@ -188,7 +200,7 @@ def _range_filter(
         label_visibility="collapsed",
     )
     c2.number_input(
-        "Max",
+        t("screener.max"),
         min_value=float(lo_bound),
         max_value=float(hi_bound),
         step=float(step),
@@ -211,7 +223,7 @@ def _range_filter(
 
 filter_cols = st.columns(3)
 with filter_cols[0]:
-    st.markdown("### Returns (%)")
+    st.markdown(f"### {t('screener.returns')}")
     r6m = _range_filter("6m", -100.0, 2000.0, 1.0, "r6m")
     r1y = _range_filter("1y", -100.0, 2000.0, 1.0, "r1y")
     r2y = _range_filter("2y", -100.0, 2000.0, 1.0, "r2y")
@@ -219,19 +231,18 @@ with filter_cols[0]:
     r10y = _range_filter("10y", -100.0, 10000.0, 10.0, "r10y")
 
 with filter_cols[1]:
-    st.markdown("### Indicators")
+    st.markdown(f"### {t('screener.indicators')}")
     rsi_r = _range_filter("RSI(14)", 0.0, 100.0, 1.0, "rsi")
-    sma_r = _range_filter("vs SMA 200 (%)", -80.0, 200.0, 1.0, "sma200")
-    pos_r = _range_filter("52-week position (%)", 0.0, 100.0, 1.0, "pos52w")
+    sma_r = _range_filter(t("screener.vs_sma200"), -80.0, 200.0, 1.0, "sma200")
+    pos_r = _range_filter(t("screener.pos_52w"), 0.0, 100.0, 1.0, "pos52w")
 
 with filter_cols[2]:
-    st.markdown("### Risk")
-    vol_r = _range_filter("Annualized vol (%)", 0.0, 300.0, 1.0, "vol")
+    st.markdown(f"### {t('screener.risk')}")
+    vol_r = _range_filter(t("screener.annual_vol"), 0.0, 300.0, 1.0, "vol")
     exclude_na = st.checkbox(
-        "Exclude rows missing the filtered metric",
+        t("screener.exclude_na"),
         value=False,
-        help="When a row lacks a metric (e.g. 10y return for a young ETF), "
-        "keep it unless this box is checked.",
+        help=t("screener.exclude_na_help"),
     )
 
 
@@ -259,16 +270,16 @@ filtered = _apply(filtered, "52w %", pos_r, (0.0, 100.0))
 filtered = _apply(filtered, "Vol %", vol_r, (0.0, 300.0))
 
 sort_col = st.selectbox(
-    "Sort by",
+    t("screener.sort_by"),
     ["Ticker", "Type", "Price", "6m", "1y", "2y", "5y", "10y", "RSI", "vs SMA200 %", "52w %", "Vol %"],
     index=0,
 )
-descending = st.checkbox("Descending", value=False)
+descending = st.checkbox(t("screener.descending"), value=False)
 filtered = filtered.sort_values(
     sort_col, ascending=not descending, na_position="last"
 ).reset_index(drop=True)
 
-st.subheader(f"Results — {len(filtered)} of {len(df)}")
+st.subheader(t("screener.results", shown=len(filtered), total=len(df)))
 st.dataframe(
     filtered,
     width="stretch",

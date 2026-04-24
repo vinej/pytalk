@@ -5,6 +5,7 @@ import uuid
 import streamlit as st
 
 from pytalk.custom_tickers import combined_label, combined_symbols
+from pytalk.i18n import category_label, t
 from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
 from pytalk.portfolios import (
     Holding,
@@ -23,7 +24,7 @@ CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().
 
 # Widget-state preservation is handled once in App.py.
 
-st.title("Portfolios")
+st.title(t("nav.portfolios"))
 
 
 def _pop_ss(key: str) -> None:
@@ -63,9 +64,9 @@ def _holdings_editor(state_key: str) -> list[Holding]:
     rows = st.session_state[state_key]
 
     hdr = st.columns([3, 5, 2, 1])
-    hdr[0].markdown("**Type**")
-    hdr[1].markdown("**Ticker**")
-    hdr[2].markdown("**Weight**")
+    hdr[0].markdown(f"**{t('common.type')}**")
+    hdr[1].markdown(f"**{t('common.ticker')}**")
+    hdr[2].markdown(f"**{t('portfolios.weight')}**")
     hdr[3].markdown("&nbsp;")
 
     to_remove: str | None = None
@@ -77,9 +78,10 @@ def _holdings_editor(state_key: str) -> list[Holding]:
 
         _cur = row["category"] if row["category"] in _ROW_CATEGORIES else _ROW_CATEGORIES[0]
         category = cols[0].selectbox(
-            "Type",
+            t("common.type"),
             _ROW_CATEGORIES,
             index=_ROW_CATEGORIES.index(_cur),
+            format_func=category_label,
             key=f"{state_key}_cat_{rid}",
             label_visibility="collapsed",
         )
@@ -94,14 +96,18 @@ def _holdings_editor(state_key: str) -> list[Holding]:
             with cols[1]:
                 sub = st.columns([5, 1])
                 typed = sub[0].text_input(
-                    "Ticker",
+                    t("common.ticker"),
                     value=row["ticker"],
-                    placeholder="Custom symbol",
+                    placeholder=t("portfolios.custom_placeholder"),
                     key=f"{state_key}_tkr_custom_{rid}",
                     label_visibility="collapsed",
                 ).strip().upper()
                 row["ticker"] = typed
-                if sub[1].button("↩", key=f"{state_key}_back_{rid}", help="Use picklist"):
+                if sub[1].button(
+                    "↩",
+                    key=f"{state_key}_back_{rid}",
+                    help=t("portfolios.use_picklist"),
+                ):
                     row["custom"] = False
                     row["ticker"] = symbols[0] if symbols else ""
                     st.rerun()
@@ -109,7 +115,7 @@ def _holdings_editor(state_key: str) -> list[Holding]:
             options = symbols + [OTHER]
             default_idx = symbols.index(row["ticker"]) if row["ticker"] in symbols else 0
             choice = cols[1].selectbox(
-                "Ticker",
+                t("common.ticker"),
                 options,
                 index=default_idx,
                 format_func=lambda s, c=category: combined_label(CURRENT_USER, c, s),
@@ -124,7 +130,7 @@ def _holdings_editor(state_key: str) -> list[Holding]:
                 row["ticker"] = choice
 
         weight = cols[2].number_input(
-            "Weight",
+            t("portfolios.weight"),
             min_value=0.0,
             value=float(row["weight"]),
             step=0.1,
@@ -133,14 +139,14 @@ def _holdings_editor(state_key: str) -> list[Holding]:
         )
         row["weight"] = weight
 
-        if cols[3].button("✕", key=f"{state_key}_rm_{rid}", help="Remove"):
+        if cols[3].button("✕", key=f"{state_key}_rm_{rid}", help=t("portfolios.remove")):
             to_remove = rid
 
     if to_remove is not None:
         st.session_state[state_key] = [r for r in rows if r["id"] != to_remove]
         st.rerun()
 
-    if st.button("Add holding", key=f"{state_key}_add"):
+    if st.button(t("portfolios.add_holding"), key=f"{state_key}_add"):
         st.session_state[state_key].append(_blank_row())
         st.rerun()
 
@@ -156,15 +162,19 @@ def _holdings_editor(state_key: str) -> list[Holding]:
     return holdings
 
 
-st.header("Create a portfolio")
+st.header(t("portfolios.create_header"))
 _init_rows("_create_rows", [])
-new_name = st.text_input("Name", placeholder="e.g. Tech Megacaps", key="_create_name")
+new_name = st.text_input(
+    t("portfolios.name"),
+    placeholder=t("portfolios.name_placeholder"),
+    key="_create_name",
+)
 create_holdings = _holdings_editor("_create_rows")
 
-if st.button("Save portfolio", type="primary", key="_create_save"):
+if st.button(t("portfolios.save"), type="primary", key="_create_save"):
     try:
         save_portfolio(CURRENT_USER, Portfolio(name=new_name.strip(), holdings=create_holdings))
-        st.success(f"Saved portfolio “{new_name.strip()}”.")
+        st.success(t("portfolios.saved", name=new_name.strip()))
         st.session_state.pop("_create_rows", None)
         st.session_state.pop("_create_name", None)
         st.rerun()
@@ -172,48 +182,48 @@ if st.button("Save portfolio", type="primary", key="_create_save"):
         st.error(str(e))
 
 st.divider()
-st.header("Existing portfolios")
+st.header(t("portfolios.existing"))
 
 names = list_portfolios(CURRENT_USER)
 if not names:
-    st.info("No portfolios yet. Create one above.")
+    st.info(t("common.no_portfolios_here"))
     st.stop()
 
 for name in names:
     portfolio = get_portfolio(CURRENT_USER, name)
     if portfolio is None:
         continue
-    with st.expander(f"{name} ({len(portfolio.holdings)} holdings)"):
+    with st.expander(t("portfolios.expander", name=name, count=len(portfolio.holdings))):
         state_key = f"_edit_{name}_rows"
         _init_rows(state_key, portfolio.holdings)
         edited = _holdings_editor(state_key)
 
         col_save, col_delete = st.columns(2)
-        if col_save.button("Save changes", key=f"save_{name}", type="primary"):
+        if col_save.button(t("portfolios.save_changes"), key=f"save_{name}", type="primary"):
             try:
                 save_portfolio(CURRENT_USER, Portfolio(name=name, holdings=edited))
                 st.session_state.pop(state_key, None)
-                st.success("Updated.")
+                st.success(t("portfolios.updated"))
                 st.rerun()
             except ValueError as e:
                 st.error(str(e))
-        if col_delete.button("Delete", key=f"del_{name}"):
+        if col_delete.button(t("portfolios.delete"), key=f"del_{name}"):
             delete_portfolio(CURRENT_USER, name)
             st.session_state.pop(state_key, None)
-            st.success(f"Deleted “{name}”.")
+            st.success(t("portfolios.deleted", name=name))
             st.rerun()
 
         total = sum(h.weight for h in edited)
         if total > 0:
             normalized = ", ".join(f"{h.ticker}: {h.weight/total:.1%}" for h in edited)
-            st.caption(f"Normalized weights — {normalized}")
+            st.caption(t("portfolios.normalized", text=normalized))
 
         _validate_key = f"_portfolios_validate_{name}"
-        if st.button("🧠 Validate portfolio"):
+        if st.button(t("portfolios.validate_btn")):
             if not llm_available():
                 st.error(unavailable_message())
             elif not edited or total <= 0:
-                st.warning("Save the portfolio first, or fix zero weights.")
+                st.warning(t("portfolios.save_first"))
             else:
                 holdings_text = "\n".join(
                     f"  - {h.ticker} ({h.category}) "
@@ -256,7 +266,7 @@ Don't invent facts about any holding you don't recognise; just say "unfamiliar".
 
         if st.session_state.get(_validate_key):
             st.button(
-                "Clear validation",
+                t("portfolios.clear_validation"),
                 key=f"clear_portfolios_validate_{name}",
                 on_click=_pop_ss,
                 args=(_validate_key,),

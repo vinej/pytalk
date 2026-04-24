@@ -306,6 +306,8 @@ def tickers(category: str) -> list[str]:
 
 def label(category: str, symbol: str) -> str:
     if symbol == OTHER:
-        return OTHER
+        from pytalk.i18n import other_label  # noqa: PLC0415 — lazy to avoid cycles
+
+        return other_label()
     name = UNIVERSE[category].get(symbol, "")
     return f"{symbol} — {name}" if name else symbol

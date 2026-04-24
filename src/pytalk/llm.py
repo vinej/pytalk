@@ -32,6 +32,22 @@ Rules:
 - If you don't have the data to answer, say so rather than guessing.
 """
 
+_LANGUAGE_DIRECTIVES = {
+    "fr": "Respond in French (français). Keep ticker symbols and numeric values unchanged.",
+    "en": "Respond in English.",
+}
+
+
+def _active_language_directive() -> str:
+    """Read the current UI language from Streamlit session state, if any."""
+    try:
+        import streamlit as st
+
+        lang = st.session_state.get("lang")
+    except Exception:
+        return ""
+    return _LANGUAGE_DIRECTIVES.get(lang, "")
+
 
 def _get_groq_key() -> str | None:
     """Look up GROQ_API_KEY from env vars or Streamlit secrets."""
@@ -151,6 +167,9 @@ def ask_llm_stream(
     timeout: int = 180,
 ) -> Iterator[str]:
     """Stream an LLM completion using the active provider."""
+    directive = _active_language_directive()
+    if directive and system is not None:
+        system = f"{system}\n\n{directive}"
     if active_provider() == "groq":
         yield from _groq_stream(prompt, system, model or DEFAULT_GROQ_MODEL, timeout)
     else:
