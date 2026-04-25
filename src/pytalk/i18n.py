@@ -207,20 +207,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "analysis.equity_label":    {"en": "Equity",         "fr": "Capital"},
     "analysis.drawdown_label":  {"en": "Drawdown %",     "fr": "Repli %"},
 
-    # ── Backtest page (standalone) ──────────────────────────────────────
-    "backtest.configure_hint": {
-        "en": "Configure parameters in the sidebar, then click Run backtest.",
-        "fr": "Configurez les paramètres dans la barre latérale puis cliquez sur Lancer.",
-    },
-    "backtest.title_ticker":    {"en": "Backtest for {label} with {strategy}",
-                                 "fr": "Test rétroactif pour {label} avec {strategy}"},
-    "backtest.title_portfolio": {"en": "Backtest for portfolio “{name}” with {strategy}",
-                                 "fr": "Test rétroactif pour le portefeuille « {name} » avec {strategy}"},
-    "backtest.trades":          {"en": "Trades",        "fr": "Transactions"},
-    "backtest.per_ticker_trades":{"en": "Per-ticker trades", "fr": "Transactions par symbole"},
-    "backtest.portfolio_stats": {"en": "Portfolio stats", "fr": "Statistiques du portefeuille"},
-    "backtest.running":         {"en": "Running backtest…", "fr": "Test rétroactif en cours…"},
-    "backtest.loading_prices":  {"en": "Loading prices…", "fr": "Chargement des prix…"},
+    # ── Strategy parameter sliders (used in Analysis sidebar) ──────────
     "backtest.sma_window_faber":{"en": "SMA window (trading days, ~21 per month)",
                                  "fr": "Fenêtre SMA (jours ouvrés, ~21 par mois)"},
     "backtest.sma_fast":        {"en": "Fast SMA",      "fr": "SMA rapide"},
@@ -265,6 +252,48 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "portfolios.clear_validation":{"en": "Clear validation",   "fr": "Effacer la validation"},
     "portfolios.save_first":     {"en": "Save the portfolio first, or fix zero weights.",
                                   "fr": "Enregistrez d'abord le portefeuille ou corrigez les poids nuls."},
+    "portfolios.shares":         {"en": "Shares",         "fr": "Parts"},
+    "portfolios.buy_date":       {"en": "Buy date",       "fr": "Date d'achat"},
+    "portfolios.legacy_warning": {
+        "en": "Some holdings have no shares / buy date set (legacy weight-only). They contribute "
+              "to the equity curve via stored weights but have no P&L. Edit and re-save to upgrade.",
+        "fr": "Certaines positions n'ont ni parts ni date d'achat (ancien format à poids seul). "
+              "Elles contribuent à la courbe de capital via leurs poids enregistrés mais sans P&L. "
+              "Modifiez et enregistrez à nouveau pour migrer.",
+    },
+
+    # ── Analysis page — holdings P&L table ──────────────────────────────
+    "holdings.title":            {"en": "Holdings",            "fr": "Positions"},
+    "holdings.col_ticker":       {"en": "Ticker",              "fr": "Symbole"},
+    "holdings.col_shares":       {"en": "Shares",              "fr": "Parts"},
+    "holdings.col_buy_date":     {"en": "Buy date",            "fr": "Date d'achat"},
+    "holdings.col_buy_price":    {"en": "Buy price",           "fr": "Prix d'achat"},
+    "holdings.col_current_price":{"en": "Current price",       "fr": "Prix actuel"},
+    "holdings.col_cost":         {"en": "Cost basis",          "fr": "Coût de base"},
+    "holdings.col_value":        {"en": "Current value",       "fr": "Valeur actuelle"},
+    "holdings.col_pnl":          {"en": "P&L $",               "fr": "P&L $"},
+    "holdings.col_pnl_pct":      {"en": "P&L %",               "fr": "P&L %"},
+    "holdings.col_weight":       {"en": "Weight %",            "fr": "Poids %"},
+    "holdings.total_cost":       {"en": "Total cost basis",    "fr": "Coût total"},
+    "holdings.total_value":      {"en": "Total current value", "fr": "Valeur totale actuelle"},
+    "holdings.total_pnl":        {"en": "Total P&L",           "fr": "P&L total"},
+    "holdings.no_buy_data":      {"en": "no price on buy date", "fr": "aucun prix à la date d'achat"},
+
+    # ── Analysis equity curve mode toggle ───────────────────────────────
+    "analysis.curve_mode":       {"en": "Equity curve view",  "fr": "Vue de la courbe"},
+    "analysis.curve_value":      {"en": "Real value ($)",     "fr": "Valeur réelle ($)"},
+    "analysis.curve_rebased":    {"en": "Rebased to 100",     "fr": "Rebasée à 100"},
+    "analysis.title_portfolio_real": {
+        "en": "Portfolio “{name}” — actual value over time",
+        "fr": "Portefeuille « {name} » — valeur réelle dans le temps",
+    },
+
+    # ── Backtest weight-source toggle ───────────────────────────────────
+    "backtest.weight_source":         {"en": "Weight source",            "fr": "Source des poids"},
+    "backtest.weight_from_shares":    {"en": "Calculated from shares",   "fr": "Calculés à partir des parts"},
+    "backtest.weight_manual":         {"en": "Manual weights",           "fr": "Poids manuels"},
+    "backtest.weight_fallback_warn":  {"en": "Some holdings have no shares — falling back to manual weights.",
+                                       "fr": "Certaines positions n'ont pas de parts — repli sur les poids manuels."},
 
     # ── Custom tickers page ─────────────────────────────────────────────
     "customticker.title":        {"en": "My Custom Tickers",
@@ -277,6 +306,44 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
               "automatiquement lorsque vous en saisissez un via **Autre…** dans Analyse — ou "
               "vous pouvez les ajouter manuellement ci-dessous. Le `quoteType` de Yahoo "
               "détermine la catégorie.",
+    },
+    "customticker.search_header":   {"en": "🔎 Search Yahoo Finance",
+                                     "fr": "🔎 Rechercher sur Yahoo Finance"},
+    "customticker.search_label":    {"en": "Company name or partial symbol",
+                                     "fr": "Nom de société ou symbole partiel"},
+    "customticker.search_placeholder":{"en": "e.g. apple, nestle, vanguard",
+                                       "fr": "ex. apple, nestle, vanguard"},
+    "customticker.search_no_results":{"en": "No matches found.",
+                                      "fr": "Aucun résultat."},
+    "customticker.search_error":    {"en": "Search unavailable: {error}",
+                                     "fr": "Recherche indisponible : {error}"},
+    "customticker.col_name":        {"en": "Name",      "fr": "Nom"},
+    "customticker.col_exchange":    {"en": "Exchange",  "fr": "Bourse"},
+    "customticker.col_type":        {"en": "Type",      "fr": "Type"},
+    "customticker.add_short":       {"en": "Add",       "fr": "Ajouter"},
+    "customticker.help_header":  {"en": "💡 Where to find ticker symbols",
+                                  "fr": "💡 Où trouver les symboles boursiers"},
+    "customticker.help_body": {
+        "en": (
+            "**Yahoo Finance** ([finance.yahoo.com](https://finance.yahoo.com)) is the canonical "
+            "source — this app uses Yahoo's data, so whatever symbol Yahoo lists is exactly what "
+            "works here.\n\n"
+            "**Exchange suffixes for non-US tickers:**\n"
+            "- `.TO` Toronto · `.SW` Swiss · `.PA` Paris · `.L` London\n"
+            "- `.HK` Hong Kong · `.AX` Australia · `.T` Tokyo · `.DE` Frankfurt\n\n"
+            "**Tip:** if a Yahoo-listed symbol returns empty here, Yahoo has the listing but no "
+            "historical price data — try a different exchange suffix."
+        ),
+        "fr": (
+            "**Yahoo Finance** ([finance.yahoo.com](https://finance.yahoo.com)) est la source de "
+            "référence — cette application utilise les données de Yahoo, donc tout symbole listé "
+            "par Yahoo fonctionne ici.\n\n"
+            "**Suffixes d'échange pour les symboles hors États-Unis :**\n"
+            "- `.TO` Toronto · `.SW` Suisse · `.PA` Paris · `.L` Londres\n"
+            "- `.HK` Hong Kong · `.AX` Australie · `.T` Tokyo · `.DE` Francfort\n\n"
+            "**Astuce :** si un symbole listé sur Yahoo donne un résultat vide ici, Yahoo a la "
+            "cote mais pas de données historiques — essayez un autre suffixe d'échange."
+        ),
     },
     "customticker.add_header":   {"en": "➕ Add a custom ticker manually",
                                   "fr": "➕ Ajouter un symbole personnalisé"},

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import streamlit as st
 
@@ -41,6 +42,8 @@ def _blank_row() -> dict:
         "category": default_category,
         "ticker": default_ticker,
         "weight": 1.0,
+        "shares": 0.0,
+        "buy_date": date.today().isoformat(),
         "custom": False,
     }
 
@@ -54,6 +57,8 @@ def _init_rows(state_key: str, holdings: list[Holding]) -> None:
             "category": h.category,
             "ticker": h.ticker,
             "weight": h.weight,
+            "shares": float(h.shares or 0.0),
+            "buy_date": h.buy_date or date.today().isoformat(),
             "custom": h.ticker not in tickers(h.category),
         }
         for h in holdings
@@ -63,18 +68,21 @@ def _init_rows(state_key: str, holdings: list[Holding]) -> None:
 def _holdings_editor(state_key: str) -> list[Holding]:
     rows = st.session_state[state_key]
 
-    hdr = st.columns([3, 5, 2, 1])
+    hdr = st.columns([3, 4, 2, 2, 1])
     hdr[0].markdown(f"**{t('common.type')}**")
     hdr[1].markdown(f"**{t('common.ticker')}**")
-    hdr[2].markdown(f"**{t('portfolios.weight')}**")
-    hdr[3].markdown("&nbsp;")
+    hdr[2].markdown(f"**{t('portfolios.shares')}**")
+    hdr[3].markdown(f"**{t('portfolios.buy_date')}**")
+    hdr[4].markdown("&nbsp;")
 
     to_remove: str | None = None
 
     for row in rows:
         row.setdefault("custom", False)
+        row.setdefault("shares", 0.0)
+        row.setdefault("buy_date", date.today().isoformat())
         rid = row["id"]
-        cols = st.columns([3, 5, 2, 1])
+        cols = st.columns([3, 4, 2, 2, 1])
 
         _cur = row["category"] if row["category"] in _ROW_CATEGORIES else _ROW_CATEGORIES[0]
         category = cols[0].selectbox(
@@ -129,17 +137,30 @@ def _holdings_editor(state_key: str) -> list[Holding]:
             else:
                 row["ticker"] = choice
 
-        weight = cols[2].number_input(
-            t("portfolios.weight"),
+        shares = cols[2].number_input(
+            t("portfolios.shares"),
             min_value=0.0,
-            value=float(row["weight"]),
-            step=0.1,
-            key=f"{state_key}_wt_{rid}",
+            value=float(row["shares"]),
+            step=1.0,
+            key=f"{state_key}_sh_{rid}",
             label_visibility="collapsed",
         )
-        row["weight"] = weight
+        row["shares"] = shares
 
-        if cols[3].button("✕", key=f"{state_key}_rm_{rid}", help=t("portfolios.remove")):
+        try:
+            _bd_default = date.fromisoformat(row["buy_date"])
+        except (ValueError, TypeError):
+            _bd_default = date.today()
+        bd = cols[3].date_input(
+            t("portfolios.buy_date"),
+            value=_bd_default,
+            max_value=date.today(),
+            key=f"{state_key}_bd_{rid}",
+            label_visibility="collapsed",
+        )
+        row["buy_date"] = bd.isoformat() if bd else None
+
+        if cols[4].button("✕", key=f"{state_key}_rm_{rid}", help=t("portfolios.remove")):
             to_remove = rid
 
     if to_remove is not None:
@@ -156,8 +177,16 @@ def _holdings_editor(state_key: str) -> list[Holding]:
         if not row["ticker"] or row["ticker"] in seen:
             continue
         seen.add(row["ticker"])
+        # Keep weight at 1.0 going forward — it's only used as a fallback for
+        # holdings that don't have shares set. New rows always have shares.
         holdings.append(
-            Holding(ticker=row["ticker"], category=row["category"], weight=float(row["weight"]))
+            Holding(
+                ticker=row["ticker"],
+                category=row["category"],
+                weight=float(row.get("weight", 1.0)),
+                shares=float(row.get("shares", 0.0) or 0.0),
+                buy_date=row.get("buy_date") or None,
+            )
         )
     return holdings
 
@@ -213,8 +242,11 @@ for name in names:
             st.success(t("portfolios.deleted", name=name))
             st.rerun()
 
+        # Weight summary only matters in legacy mode (some holdings missing shares).
+        # When every holding has shares, the real weight comes from current prices
+        # and is shown on the Analysis page.
         total = sum(h.weight for h in edited)
-        if total > 0:
+        if total > 0 and not all(h.shares > 0 and h.buy_date for h in edited):
             normalized = ", ".join(f"{h.ticker}: {h.weight/total:.1%}" for h in edited)
             st.caption(t("portfolios.normalized", text=normalized))
 

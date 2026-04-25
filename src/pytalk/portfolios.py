@@ -11,6 +11,13 @@ class Holding:
     ticker: str
     category: str
     weight: float = 1.0
+    shares: float = 0.0
+    buy_date: str | None = None  # ISO yyyy-mm-dd, or None for legacy holdings
+
+    @property
+    def has_position(self) -> bool:
+        """True when this holding has shares + buy_date set (not a legacy weight-only row)."""
+        return self.shares > 0 and bool(self.buy_date)
 
 
 @dataclass
@@ -23,6 +30,17 @@ class Portfolio:
         if total <= 0:
             raise ValueError("Portfolio weights must sum to a positive value")
         return {h.ticker: h.weight / total for h in self.holdings}
+
+    def has_positions(self) -> bool:
+        """True iff every holding has shares + buy_date set."""
+        return bool(self.holdings) and all(h.has_position for h in self.holdings)
+
+    def weights_from_values(self, values: dict[str, float]) -> dict[str, float]:
+        """Compute fractional weights from current dollar values per ticker."""
+        total = sum(values.get(h.ticker, 0.0) for h in self.holdings)
+        if total <= 0:
+            raise ValueError("Total portfolio value must be positive")
+        return {h.ticker: values.get(h.ticker, 0.0) / total for h in self.holdings}
 
 
 _SCHEMA_STATEMENTS = [
@@ -47,9 +65,29 @@ _SCHEMA_STATEMENTS = [
 ]
 
 
+def _ensure_holdings_columns(con) -> None:
+    """Add shares + buy_date columns to portfolio_holdings if missing.
+
+    SQLite/libSQL does not support `ADD COLUMN IF NOT EXISTS`, so we probe with
+    a SELECT and only ALTER when the probe fails.
+    """
+    for column, ddl in (
+        ("shares",   "ALTER TABLE portfolio_holdings ADD COLUMN shares REAL DEFAULT 0"),
+        ("buy_date", "ALTER TABLE portfolio_holdings ADD COLUMN buy_date TEXT"),
+    ):
+        try:
+            con.execute(f"SELECT {column} FROM portfolio_holdings LIMIT 1")
+        except Exception:
+            try:
+                con.execute(ddl)
+            except Exception:
+                pass  # raced or already added
+
+
 def _connect():
     con = connect()
     ensure_schema(con, _SCHEMA_STATEMENTS)
+    _ensure_holdings_columns(con)
     return con
 
 
@@ -88,7 +126,7 @@ def get_portfolio(user_email: str, name: str) -> Portfolio | None:
             return None
         holdings_rows = con.execute(
             """
-            SELECT ticker, category, weight
+            SELECT ticker, category, weight, shares, buy_date
             FROM portfolio_holdings
             WHERE user_email = ? AND portfolio_name = ?
             ORDER BY ticker
@@ -96,8 +134,14 @@ def get_portfolio(user_email: str, name: str) -> Portfolio | None:
             (e, name),
         ).fetchall()
         holdings = [
-            Holding(ticker=t, category=c, weight=float(w))
-            for t, c, w in holdings_rows
+            Holding(
+                ticker=tk,
+                category=cat,
+                weight=float(w or 1.0),
+                shares=float(sh or 0.0),
+                buy_date=bd or None,
+            )
+            for tk, cat, w, sh, bd in holdings_rows
         ]
         return Portfolio(name=name, holdings=holdings)
     finally:
@@ -129,10 +173,18 @@ def save_portfolio(user_email: str, portfolio: Portfolio) -> None:
                 (
                     """
                     INSERT INTO portfolio_holdings
-                        (user_email, portfolio_name, ticker, category, weight)
-                    VALUES (?, ?, ?, ?, ?)
+                        (user_email, portfolio_name, ticker, category, weight, shares, buy_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (e, portfolio.name, h.ticker.upper(), h.category, float(h.weight)),
+                    (
+                        e,
+                        portfolio.name,
+                        h.ticker.upper(),
+                        h.category,
+                        float(h.weight),
+                        float(h.shares or 0.0),
+                        h.buy_date or None,
+                    ),
                 )
             )
         write_tx(con, stmts)

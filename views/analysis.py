@@ -99,7 +99,7 @@ with st.sidebar:
             )
 
     lookback_days = st.slider(
-        t("common.lookback"), 30, 1825, 365, key="analysis_lookback"
+        t("common.lookback"), 30, 3650, 365, key="analysis_lookback"
     )
     end = st.date_input(t("common.end_date"), value=date.today(), key="analysis_end")
     start = end - timedelta(days=lookback_days)
@@ -111,6 +111,48 @@ with st.sidebar:
     show_indicators = st.checkbox(
         t("common.show_indicators"), value=True, key="analysis_show_indicators"
     )
+
+    # Strategy-specific tuning knobs. Each block only renders when its strategy
+    # is selected, so the sidebar stays uncluttered.
+    params: dict[str, float | int] = {}
+    if strategy_name == "Buy & Hold":
+        pass  # no params
+    elif strategy_name == "Faber Trend Filter":
+        params["window"] = st.slider(
+            t("backtest.sma_window_faber"), 20, 500, 200, key="analysis_faber_window"
+        )
+    elif strategy_name == "SMA Cross":
+        params["fast"] = st.slider(t("backtest.sma_fast"), 5, 100, 20, key="analysis_sma_fast")
+        params["slow"] = st.slider(t("backtest.sma_slow"), 20, 300, 50, key="analysis_sma_slow")
+    elif strategy_name == "MACD Cross":
+        params["fast"] = st.slider(t("backtest.ema_fast"), 5, 50, 12, key="analysis_macd_fast")
+        params["slow"] = st.slider(t("backtest.ema_slow"), 10, 100, 26, key="analysis_macd_slow")
+        params["signal"] = st.slider(t("backtest.signal_ema"), 3, 30, 9, key="analysis_macd_signal")
+    elif strategy_name == "RSI Mean Reversion":
+        params["window"] = st.slider(t("backtest.rsi_window"), 2, 50, 14, key="analysis_rsi_window")
+        params["oversold"] = st.slider(t("backtest.oversold"), 5, 45, 30, key="analysis_rsi_oversold")
+        params["overbought"] = st.slider(
+            t("backtest.overbought"), 55, 95, 70, key="analysis_rsi_overbought"
+        )
+    elif strategy_name == "Bollinger Mean Reversion":
+        params["window"] = st.slider(t("backtest.window"), 5, 100, 20, key="analysis_boll_window")
+        params["k"] = st.slider(
+            t("backtest.stddev"), 1.0, 4.0, 2.0, step=0.1, key="analysis_boll_k"
+        )
+    elif strategy_name == "Donchian Breakout":
+        params["entry_window"] = st.slider(
+            t("backtest.donch_entry"), 5, 100, 20, key="analysis_donch_entry"
+        )
+        params["exit_window"] = st.slider(
+            t("backtest.donch_exit"), 3, 60, 10, key="analysis_donch_exit"
+        )
+    elif strategy_name == "VWAP Reversion":
+        params["window"] = st.slider(
+            t("backtest.vwap_window"), 5, 100, 20, key="analysis_vwap_window"
+        )
+        params["k"] = st.slider(
+            t("backtest.stddev_entry"), 0.5, 4.0, 1.5, step=0.1, key="analysis_vwap_k"
+        )
 
     st.divider()
     cash = st.number_input(
@@ -138,6 +180,17 @@ with st.sidebar:
             "Quarterly": "Q",
             "Yearly": "Y",
         }[_reb_label]
+    weight_source = "manual"
+    if source == "Portfolio":
+        weight_source = st.radio(
+            t("backtest.weight_source"),
+            ["shares", "manual"],
+            index=0,
+            format_func=lambda s: t(
+                "backtest.weight_from_shares" if s == "shares" else "backtest.weight_manual"
+            ),
+            key="analysis_weight_source",
+        )
     run_bt = st.button(t("common.run_backtest"), type="primary")
 
 is_portfolio = source == "Portfolio"
@@ -192,6 +245,102 @@ def _build_portfolio_series(
     )
 
 
+def _build_portfolio_value_series(
+    holdings, s: date, e: date
+) -> pd.DataFrame:
+    """Real dollar value series = sum(shares × close) per day for shares-based holdings.
+
+    Holdings without shares are skipped. Returns OHLC-shaped df where every
+    OHLC field equals the day's portfolio value. Empty df if no usable holdings.
+    """
+    closes: dict[str, pd.Series] = {}
+    adjs: dict[str, pd.Series] = {}
+    shares_map: dict[str, float] = {}
+    for h in holdings:
+        if h.shares <= 0:
+            continue
+        prices = get_prices(h.ticker, s, e)
+        if prices.empty:
+            continue
+        closes[h.ticker] = prices["close"]
+        adjs[h.ticker] = prices["adj_close"]
+        shares_map[h.ticker] = float(h.shares)
+    if not closes:
+        return pd.DataFrame()
+
+    closes_df = pd.DataFrame(closes).sort_index().ffill().dropna()
+    adjs_df = pd.DataFrame(adjs).sort_index().ffill().dropna()
+    if closes_df.empty:
+        return pd.DataFrame()
+
+    sh = pd.Series(shares_map)
+    combined_close = (closes_df * sh).sum(axis=1)
+    combined_adj = (adjs_df * sh).sum(axis=1)
+    return pd.DataFrame(
+        {
+            "open": combined_close,
+            "high": combined_close,
+            "low": combined_close,
+            "close": combined_close,
+            "adj_close": combined_adj,
+            "volume": 0,
+        }
+    )
+
+
+def _holdings_pnl(holdings, end_d: date) -> tuple[list[dict], dict[str, float]]:
+    """Per-holding P&L as of end_d. Returns (rows, current_values_by_ticker).
+
+    Skips holdings without shares or buy_date. Buy price is the first available
+    close on/after buy_date; current price is the last close on/before end_d.
+    """
+    rows: list[dict] = []
+    values: dict[str, float] = {}
+    for h in holdings:
+        if h.shares <= 0 or not h.buy_date:
+            continue
+        try:
+            buy_d = date.fromisoformat(h.buy_date)
+        except (ValueError, TypeError):
+            continue
+
+        prices = get_prices(h.ticker, buy_d, end_d)
+        if prices.empty:
+            rows.append({
+                "ticker": h.ticker,
+                "shares": h.shares,
+                "buy_date": h.buy_date,
+                "buy_price": None,
+                "current_price": None,
+                "cost_basis": None,
+                "current_value": None,
+                "pnl": None,
+                "pnl_pct": None,
+            })
+            continue
+
+        buy_price = float(prices["close"].iloc[0])
+        current_price = float(prices["close"].iloc[-1])
+        cost = h.shares * buy_price
+        value = h.shares * current_price
+        pnl = value - cost
+        pnl_pct = (pnl / cost * 100) if cost > 0 else None
+
+        rows.append({
+            "ticker": h.ticker,
+            "shares": h.shares,
+            "buy_date": h.buy_date,
+            "buy_price": buy_price,
+            "current_price": current_price,
+            "cost_basis": cost,
+            "current_value": value,
+            "pnl": pnl,
+            "pnl_pct": pnl_pct,
+        })
+        values[h.ticker] = value
+    return rows, values
+
+
 if is_portfolio:
     if not portfolio_name:
         st.info(t("common.pick_portfolio"))
@@ -200,17 +349,90 @@ if is_portfolio:
     if portfolio is None or not portfolio.holdings:
         st.error(t("common.no_holdings", name=portfolio_name))
         st.stop()
-    weights_norm = portfolio.normalized_weights()
-    with st.spinner(t("analysis.building_series", name=portfolio_name)):
-        df = _build_portfolio_series(weights_norm, start, end)
-    if df.empty:
-        st.error(t("analysis.no_overlap"))
-        st.stop()
-    st.title(t("analysis.title_portfolio", name=portfolio_name))
+
+    # Soft fallback: shares-based view if every holding has shares + buy_date,
+    # otherwise legacy weight-based view (with a warning).
+    has_positions = portfolio.has_positions()
+
+    if has_positions:
+        # Compute per-holding P&L first; current values drive the derived weights.
+        with st.spinner(t("analysis.building_series", name=portfolio_name)):
+            pnl_rows, current_values = _holdings_pnl(portfolio.holdings, end)
+            try:
+                weights_norm = portfolio.weights_from_values(current_values)
+            except ValueError:
+                weights_norm = portfolio.normalized_weights()
+            value_df = _build_portfolio_value_series(portfolio.holdings, start, end)
+            rebased_df = _build_portfolio_series(weights_norm, start, end)
+        if value_df.empty or rebased_df.empty:
+            st.error(t("analysis.no_overlap"))
+            st.stop()
+    else:
+        st.warning(t("portfolios.legacy_warning"))
+        weights_norm = portfolio.normalized_weights()
+        with st.spinner(t("analysis.building_series", name=portfolio_name)):
+            rebased_df = _build_portfolio_series(weights_norm, start, end)
+        if rebased_df.empty:
+            st.error(t("analysis.no_overlap"))
+            st.stop()
+        value_df = pd.DataFrame()
+        pnl_rows = []
+        current_values = {}
+
+    # Default chart: real value when available, rebased otherwise.
+    _curve_options = ["value", "rebased"] if has_positions else ["rebased"]
+    _curve_mode = st.radio(
+        t("analysis.curve_mode"),
+        _curve_options,
+        index=0,
+        horizontal=True,
+        format_func=lambda c: t(f"analysis.curve_{c}"),
+        key="analysis_curve_mode",
+    ) if len(_curve_options) > 1 else "rebased"
+    df = value_df if _curve_mode == "value" and has_positions else rebased_df
+
+    if has_positions and _curve_mode == "value":
+        st.title(t("analysis.title_portfolio_real", name=portfolio_name))
+    else:
+        st.title(t("analysis.title_portfolio", name=portfolio_name))
+
     st.caption(
         t("analysis.caption_portfolio")
         + ", ".join(f"{tk}: {w:.1%}" for tk, w in weights_norm.items())
     )
+
+    # Holdings P&L table — only when we have shares-based holdings.
+    if has_positions and pnl_rows:
+        total_cost = sum(r["cost_basis"] or 0.0 for r in pnl_rows)
+        total_value = sum(r["current_value"] or 0.0 for r in pnl_rows)
+        total_pnl = total_value - total_cost
+        total_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
+
+        with st.container(border=True):
+            st.subheader(t("holdings.title"))
+            tc, tv, tp = st.columns(3)
+            tc.metric(t("holdings.total_cost"),  f"{total_cost:,.2f}")
+            tv.metric(t("holdings.total_value"), f"{total_value:,.2f}")
+            tp.metric(t("holdings.total_pnl"),
+                      f"{total_pnl:+,.2f}",
+                      delta=f"{total_pct:+.2f}%")
+
+            display_rows = []
+            for r in pnl_rows:
+                w_pct = (r["current_value"] / total_value * 100) if (r["current_value"] and total_value > 0) else None
+                display_rows.append({
+                    t("holdings.col_ticker"):        r["ticker"],
+                    t("holdings.col_shares"):        r["shares"],
+                    t("holdings.col_buy_date"):      r["buy_date"],
+                    t("holdings.col_buy_price"):     r["buy_price"],
+                    t("holdings.col_current_price"): r["current_price"],
+                    t("holdings.col_cost"):          r["cost_basis"],
+                    t("holdings.col_value"):         r["current_value"],
+                    t("holdings.col_pnl"):           r["pnl"],
+                    t("holdings.col_pnl_pct"):       r["pnl_pct"],
+                    t("holdings.col_weight"):        w_pct,
+                })
+            st.dataframe(pd.DataFrame(display_rows), width="stretch", hide_index=True)
 
 else:
     if not ticker:
@@ -617,12 +839,27 @@ commission_frac = commission_bps / 10_000
 
 if run_bt:
     if is_portfolio:
+        # Resolve weight source (with the same soft fallback as the standalone Backtest had).
+        effective_source = weight_source
+        if weight_source == "shares" and not portfolio.has_positions():
+            st.warning(t("backtest.weight_fallback_warn"))
+            effective_source = "manual"
         with st.spinner(t("analysis.running_portfolio")):
             prices_by_ticker: dict[str, pd.DataFrame] = {}
             weights_raw: dict[str, float] = {}
             for h in portfolio.holdings:
                 prices_by_ticker[h.ticker] = get_prices(h.ticker, start, end)
-                weights_raw[h.ticker] = h.weight
+            if effective_source == "shares":
+                # Reference price = close on the analysis start date.
+                for h in portfolio.holdings:
+                    pdf = prices_by_ticker[h.ticker]
+                    if pdf.empty:
+                        weights_raw[h.ticker] = 0.0
+                        continue
+                    weights_raw[h.ticker] = float(h.shares) * float(pdf["close"].iloc[0])
+            else:
+                for h in portfolio.holdings:
+                    weights_raw[h.ticker] = h.weight
             try:
                 if strategy_name == "Buy & Hold":
                     bt_result = run_portfolio_buy_hold(
@@ -639,6 +876,7 @@ if run_bt:
                         strategy_class,
                         cash=float(cash),
                         commission=commission_frac,
+                        **params,
                     )
                 st.session_state["_analysis_bt"] = {
                     "mode": "Portfolio",
@@ -653,7 +891,7 @@ if run_bt:
         with st.spinner(t("analysis.running_ticker", ticker=ticker)):
             try:
                 bt_result = run_backtest(
-                    df, strategy_class, cash=float(cash), commission=commission_frac
+                    df, strategy_class, cash=float(cash), commission=commission_frac, **params
                 )
                 st.session_state["_analysis_bt"] = {
                     "mode": "Single ticker",

@@ -7,9 +7,12 @@ import pandas as pd
 import streamlit as st
 
 from pytalk import get_prices
+from pytalk.custom_tickers import list_user_tickers
 from pytalk.i18n import category_label, t
 from pytalk.indicators import rsi, sma
-from pytalk.universe import CATEGORIES, UNIVERSE
+from pytalk.universe import CATEGORIES, CUSTOM_CATEGORY, UNIVERSE
+
+CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
 
 # Widget-state preservation is handled once in App.py.
 
@@ -19,7 +22,7 @@ PERIODS = {"6m": 6, "1y": 12, "2y": 24, "5y": 60, "10y": 120}
 MAX_LOOKBACK_MONTHS = PERIODS["10y"]
 
 
-def _compute_row(ticker: str, category: str, end: date) -> dict | None:
+def _compute_row(ticker: str, category: str, name: str, end: date) -> dict | None:
     try:
         fetch_start = (
             pd.Timestamp(end) - pd.DateOffset(months=MAX_LOOKBACK_MONTHS)
@@ -37,7 +40,7 @@ def _compute_row(ticker: str, category: str, end: date) -> dict | None:
 
     row: dict = {
         "Ticker": ticker,
-        "Name": UNIVERSE[category].get(ticker, ""),
+        "Name": name,
         "Type": category,
         "Price": current,
     }
@@ -82,24 +85,48 @@ def _compute_row(ticker: str, category: str, end: date) -> dict | None:
 
 
 def _run_screen(categories: list[str], end: date) -> pd.DataFrame:
-    universe_items = [(t, c) for c in categories for t in UNIVERSE[c]]
+    # Build (ticker, real_category, name) triples. The "Custom Ticker" meta-category
+    # expands to the user's custom tickers (each kept under its own real category).
+    # Dedupe by symbol so a custom ticker stored under e.g. ETF doesn't get screened
+    # twice when both ETF and Custom Ticker are selected.
+    items: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    user_customs = list_user_tickers(CURRENT_USER)  # {real_cat: {sym: name}}
+
+    def _add(symbol: str, cat: str, name: str) -> None:
+        if symbol in seen:
+            return
+        seen.add(symbol)
+        items.append((symbol, cat, name))
+
+    for cat in categories:
+        if cat == CUSTOM_CATEGORY:
+            # Meta-category: every custom ticker, kept under its real category.
+            for real_cat, syms in user_customs.items():
+                for sym, name in syms.items():
+                    _add(sym, real_cat, name or "")
+        else:
+            # Hard-coded universe for this category…
+            for sym, name in UNIVERSE.get(cat, {}).items():
+                _add(sym, cat, name or "")
+            # …plus the user's custom tickers stored under this same category.
+            for sym, name in user_customs.get(cat, {}).items():
+                _add(sym, cat, name or "")
+
     rows: list[dict] = []
+    if not items:
+        return pd.DataFrame(rows)
 
     progress = st.progress(0.0)
     status = st.empty()
-    for i, (ticker, category) in enumerate(universe_items):
+    for i, (ticker, category, name) in enumerate(items):
         status.caption(
-            t(
-                "screener.loading_item",
-                ticker=ticker,
-                i=i + 1,
-                total=len(universe_items),
-            )
+            t("screener.loading_item", ticker=ticker, i=i + 1, total=len(items))
         )
-        row = _compute_row(ticker, category, end)
+        row = _compute_row(ticker, category, name, end)
         if row is not None:
             rows.append(row)
-        progress.progress((i + 1) / len(universe_items))
+        progress.progress((i + 1) / len(items))
     progress.empty()
     status.empty()
 

@@ -54,6 +54,7 @@ if st.session_state.get("_current_user") != _user_email:
 _BUTTON_HINTS = (
     "_rm_", "_back_", "_add", "_save", "_del_", "_explain",
     "save_", "del_", "clear_", "FormSubmitter",
+    "validate_btn",
 )
 for _k in list(st.session_state.keys()):
     if any(_h in _k for _h in _BUTTON_HINTS):
