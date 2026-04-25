@@ -219,7 +219,7 @@ for name in names:
             st.caption(t("portfolios.normalized", text=normalized))
 
         _validate_key = f"_portfolios_validate_{name}"
-        if st.button(t("portfolios.validate_btn")):
+        if st.button(t("portfolios.validate_btn"), key=f"validate_btn_{name}"):
             if not llm_available():
                 st.error(unavailable_message())
             elif not edited or total <= 0:
