@@ -111,6 +111,15 @@ with st.sidebar:
     show_indicators = st.checkbox(
         t("common.show_indicators"), value=True, key="analysis_show_indicators"
     )
+    show_volatility = st.checkbox(
+        t("common.show_volatility"), value=False, key="analysis_show_volatility"
+    )
+    if show_volatility:
+        vol_window = st.slider(
+            t("common.vol_window"), 5, 252, 21, key="analysis_vol_window"
+        )
+    else:
+        vol_window = 21
 
     # Strategy-specific tuning knobs. Each block only renders when its strategy
     # is selected, so the sidebar stays uncluttered.
@@ -727,15 +736,26 @@ with st.container(border=True):
 
 has_sub = bool(sub_indicators)
 price_label = t("analysis.portfolio_value") if is_portfolio else t("analysis.price")
+vol_title = t("analysis.volatility")
 
+# Build the subplot grid: price, [volume,] [strategy sub,] [volatility].
 if is_portfolio:
-    rows = 2 if has_sub else 1
-    row_heights = [0.75, 0.25] if has_sub else [1.0]
-    subplot_titles = [price_label] + ([strategy_name] if has_sub else [])
+    row_heights = [1.0]
+    subplot_titles = [price_label]
 else:
-    rows = 3 if has_sub else 2
-    row_heights = [0.65, 0.2, 0.15] if has_sub else [0.8, 0.2]
-    subplot_titles = [price_label, t("analysis.volume")] + ([strategy_name] if has_sub else [])
+    row_heights = [0.8, 0.2]
+    subplot_titles = [price_label, t("analysis.volume")]
+if has_sub:
+    row_heights.append(0.2)
+    subplot_titles.append(strategy_name)
+if show_volatility:
+    row_heights.append(0.2)
+    subplot_titles.append(vol_title)
+
+# Renormalize row heights so everything fits to 1.0.
+_total = sum(row_heights)
+row_heights = [h / _total for h in row_heights]
+rows = len(row_heights)
 
 fig = make_subplots(
     rows=rows,
@@ -818,19 +838,37 @@ if show_indicators:
 if not is_portfolio:
     fig.add_trace(go.Bar(x=df.index, y=df["volume"], name=t("analysis.volume")), row=2, col=1)
 
+_next_row = 2 if is_portfolio else 3  # row 1 = price, row 2 = volume (single-ticker only)
 if has_sub:
-    sub_row = 2 if is_portfolio else 3
     for ind in sub_indicators:
-        fig.add_trace(go.Scatter(x=df.index, y=ind.series, name=ind.name), row=sub_row, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=ind.series, name=ind.name), row=_next_row, col=1)
     seen_hlines: set[float] = set()
     for ind in sub_indicators:
         for h in ind.hlines:
             if h in seen_hlines:
                 continue
             seen_hlines.add(h)
-            fig.add_hline(y=h, line_dash="dash", line_color="gray", row=sub_row, col=1)
+            fig.add_hline(y=h, line_dash="dash", line_color="gray", row=_next_row, col=1)
+    _next_row += 1
 
-fig.update_layout(height=800, xaxis_rangeslider_visible=False, showlegend=True)
+if show_volatility:
+    _vol_series = (
+        df["close"].pct_change()
+        .rolling(int(vol_window))
+        .std()
+        * (252 ** 0.5)
+        * 100
+    )
+    fig.add_trace(
+        go.Scatter(x=df.index, y=_vol_series, name=vol_title, line=dict(color="#9467bd")),
+        row=_next_row,
+        col=1,
+    )
+
+# Give the chart a bit more height when extra panels are on so the price panel
+# doesn't get squeezed below readability.
+_chart_height = 800 + (120 if has_sub else 0) + (120 if show_volatility else 0)
+fig.update_layout(height=_chart_height, xaxis_rangeslider_visible=False, showlegend=True)
 st.plotly_chart(fig, width="stretch")
 
 # ── Backtest run + results ──────────────────────────────────────────────────
