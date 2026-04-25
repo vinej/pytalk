@@ -16,24 +16,38 @@ class Indicator:
     hlines: tuple[float, ...] = field(default_factory=tuple)
 
 
-def _sma_cross(prices: pd.DataFrame) -> list[Indicator]:
+def _sma_cross(prices: pd.DataFrame, fast: int = 20, slow: int = 50) -> list[Indicator]:
     close = prices["close"]
     return [
-        Indicator("SMA 20", sma(close, 20)),
-        Indicator("SMA 50", sma(close, 50)),
+        Indicator(f"SMA {fast}", sma(close, fast)),
+        Indicator(f"SMA {slow}", sma(close, slow)),
     ]
 
 
-def _macd_cross(prices: pd.DataFrame) -> list[Indicator]:
-    m = macd(prices["close"], 12, 26, 9)
+def _macd_cross(
+    prices: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9
+) -> list[Indicator]:
+    m = macd(prices["close"], fast, slow, signal)
     return [
         Indicator("MACD", m["macd"], panel="sub", hlines=(0,)),
         Indicator("Signal", m["signal"], panel="sub"),
     ]
 
 
-def _rsi_reversion(prices: pd.DataFrame) -> list[Indicator]:
-    return [Indicator("RSI 14", rsi(prices["close"], 14), panel="sub", hlines=(30, 70))]
+def _rsi_reversion(
+    prices: pd.DataFrame,
+    window: int = 14,
+    oversold: float = 30,
+    overbought: float = 70,
+) -> list[Indicator]:
+    return [
+        Indicator(
+            f"RSI {window}",
+            rsi(prices["close"], window),
+            panel="sub",
+            hlines=(oversold, overbought),
+        )
+    ]
 
 
 def _bollinger(prices: pd.DataFrame, window: int = 20, k: float = 2.0) -> list[Indicator]:
@@ -91,5 +105,7 @@ _INDICATORS = {
 }
 
 
-def indicators_for(strategy_name: str, prices: pd.DataFrame) -> list[Indicator]:
-    return _INDICATORS[strategy_name](prices)
+def indicators_for(
+    strategy_name: str, prices: pd.DataFrame, **params
+) -> list[Indicator]:
+    return _INDICATORS[strategy_name](prices, **params)

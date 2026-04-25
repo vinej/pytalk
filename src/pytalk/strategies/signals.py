@@ -148,5 +148,5 @@ _SIGNALS = {
 }
 
 
-def signals_for(strategy_name: str, prices: pd.DataFrame) -> pd.Series:
-    return _SIGNALS[strategy_name](prices)
+def signals_for(strategy_name: str, prices: pd.DataFrame, **params) -> pd.Series:
+    return _SIGNALS[strategy_name](prices, **params)

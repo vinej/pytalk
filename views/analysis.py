@@ -711,7 +711,7 @@ Respond as a markdown numbered list - one short sentence per point, no introduct
             args=(_describe_key,),
         )
 
-indicators = indicators_for(strategy_name, df) if show_indicators else []
+indicators = indicators_for(strategy_name, df, **params) if show_indicators else []
 price_overlays = [ind for ind in indicators if ind.panel == "price"]
 sub_indicators = [ind for ind in indicators if ind.panel == "sub"]
 
@@ -777,7 +777,7 @@ for ind in price_overlays:
     fig.add_trace(go.Scatter(x=df.index, y=ind.series, name=ind.name), row=1, col=1)
 
 if show_indicators:
-    signals = signals_for(strategy_name, df)
+    signals = signals_for(strategy_name, df, **params)
     buys = signals[signals == "B"]
     sells = signals[signals == "S"]
     span = float((df["high"].max() - df["low"].min()) or 1.0)
