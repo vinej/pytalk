@@ -22,9 +22,17 @@ _SCHEMA_STATEMENTS = [
 ]
 
 
+_SCHEMA_READY = False
+
+
 def _connect():
+    """Schema ensure runs once per process — idempotent DDL but each call is an
+    HTTP roundtrip on Turso."""
+    global _SCHEMA_READY
     con = connect()
-    ensure_schema(con, _SCHEMA_STATEMENTS)
+    if not _SCHEMA_READY:
+        ensure_schema(con, _SCHEMA_STATEMENTS)
+        _SCHEMA_READY = True
     return con
 
 

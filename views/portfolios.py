@@ -12,8 +12,7 @@ from pytalk.portfolios import (
     Holding,
     Portfolio,
     delete_portfolio,
-    get_portfolio,
-    list_portfolios,
+    get_all_portfolios,
     save_portfolio,
 )
 from pytalk.universe import CATEGORIES, CUSTOM_CATEGORY, OTHER, UNIVERSE, label, tickers
@@ -213,15 +212,13 @@ if st.button(t("portfolios.save"), type="primary", key="_create_save"):
 st.divider()
 st.header(t("portfolios.existing"))
 
-names = list_portfolios(CURRENT_USER)
-if not names:
+portfolios_all = get_all_portfolios(CURRENT_USER)
+if not portfolios_all:
     st.info(t("common.no_portfolios_here"))
     st.stop()
 
-for name in names:
-    portfolio = get_portfolio(CURRENT_USER, name)
-    if portfolio is None:
-        continue
+for portfolio in portfolios_all:
+    name = portfolio.name
     with st.expander(t("portfolios.expander", name=name, count=len(portfolio.holdings))):
         state_key = f"_edit_{name}_rows"
         _init_rows(state_key, portfolio.holdings)

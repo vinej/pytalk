@@ -7,12 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from pytalk import (
-    get_prices,
-    run_backtest,
-    run_portfolio_backtest,
-    run_portfolio_buy_hold,
-)
+from pytalk import get_prices
 from pytalk.custom_tickers import (
     add_ticker,
     combined_label,
@@ -24,9 +19,6 @@ from pytalk.i18n import category_label, t
 from pytalk.indicators import rsi
 from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
 from pytalk.portfolios import get_portfolio, list_portfolios
-from pytalk.strategies import STRATEGIES
-from pytalk.strategies.display import indicators_for
-from pytalk.strategies.signals import signals_for
 from pytalk.universe import CATEGORIES, OTHER, UNIVERSE, label, tickers
 
 CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
@@ -34,12 +26,6 @@ CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().
 _SOURCE_LABELS = {
     "Single ticker": "common.source_single",
     "Portfolio": "common.source_portfolio",
-}
-_REB_LABELS = {
-    "None (drift)": "common.reb_none",
-    "Monthly": "common.reb_monthly",
-    "Quarterly": "common.reb_quarterly",
-    "Yearly": "common.reb_yearly",
 }
 
 
@@ -103,14 +89,6 @@ with st.sidebar:
     )
     end = st.date_input(t("common.end_date"), value=date.today(), key="analysis_end")
     start = end - timedelta(days=lookback_days)
-    strategy_name = st.selectbox(
-        t("common.strategy"),
-        list(STRATEGIES.keys()),
-        key="analysis_strategy",
-    )
-    show_indicators = st.checkbox(
-        t("common.show_indicators"), value=True, key="analysis_show_indicators"
-    )
     show_volatility = st.checkbox(
         t("common.show_volatility"), value=False, key="analysis_show_volatility"
     )
@@ -120,87 +98,9 @@ with st.sidebar:
         )
     else:
         vol_window = 21
-
-    # Strategy-specific tuning knobs. Each block only renders when its strategy
-    # is selected, so the sidebar stays uncluttered.
-    params: dict[str, float | int] = {}
-    if strategy_name == "Buy & Hold":
-        pass  # no params
-    elif strategy_name == "Faber Trend Filter":
-        params["window"] = st.slider(
-            t("backtest.sma_window_faber"), 20, 500, 200, key="analysis_faber_window"
-        )
-    elif strategy_name == "SMA Cross":
-        params["fast"] = st.slider(t("backtest.sma_fast"), 5, 100, 20, key="analysis_sma_fast")
-        params["slow"] = st.slider(t("backtest.sma_slow"), 20, 300, 50, key="analysis_sma_slow")
-    elif strategy_name == "MACD Cross":
-        params["fast"] = st.slider(t("backtest.ema_fast"), 5, 50, 12, key="analysis_macd_fast")
-        params["slow"] = st.slider(t("backtest.ema_slow"), 10, 100, 26, key="analysis_macd_slow")
-        params["signal"] = st.slider(t("backtest.signal_ema"), 3, 30, 9, key="analysis_macd_signal")
-    elif strategy_name == "RSI Mean Reversion":
-        params["window"] = st.slider(t("backtest.rsi_window"), 2, 50, 14, key="analysis_rsi_window")
-        params["oversold"] = st.slider(t("backtest.oversold"), 5, 45, 30, key="analysis_rsi_oversold")
-        params["overbought"] = st.slider(
-            t("backtest.overbought"), 55, 95, 70, key="analysis_rsi_overbought"
-        )
-    elif strategy_name == "Bollinger Mean Reversion":
-        params["window"] = st.slider(t("backtest.window"), 5, 100, 20, key="analysis_boll_window")
-        params["k"] = st.slider(
-            t("backtest.stddev"), 1.0, 4.0, 2.0, step=0.1, key="analysis_boll_k"
-        )
-    elif strategy_name == "Donchian Breakout":
-        params["entry_window"] = st.slider(
-            t("backtest.donch_entry"), 5, 100, 20, key="analysis_donch_entry"
-        )
-        params["exit_window"] = st.slider(
-            t("backtest.donch_exit"), 3, 60, 10, key="analysis_donch_exit"
-        )
-    elif strategy_name == "VWAP Reversion":
-        params["window"] = st.slider(
-            t("backtest.vwap_window"), 5, 100, 20, key="analysis_vwap_window"
-        )
-        params["k"] = st.slider(
-            t("backtest.stddev_entry"), 0.5, 4.0, 1.5, step=0.1, key="analysis_vwap_k"
-        )
-
-    st.divider()
-    cash = st.number_input(
-        t("common.starting_cash"),
-        min_value=1_000,
-        value=10_000,
-        step=1_000,
-        key="analysis_cash",
+    show_legend = st.checkbox(
+        t("common.show_legend"), value=True, key="analysis_show_legend"
     )
-    commission_bps = st.number_input(
-        t("common.commission_bps"), 0, 100, 20, key="analysis_commission"
-    )
-    rebalance_freq = "none"
-    if source == "Portfolio" and strategy_name == "Buy & Hold":
-        _reb_label = st.selectbox(
-            t("common.rebalance_freq"),
-            ["None (drift)", "Monthly", "Quarterly", "Yearly"],
-            index=2,
-            format_func=lambda s: t(_REB_LABELS[s]),
-            key="analysis_reb_freq",
-        )
-        rebalance_freq = {
-            "None (drift)": "none",
-            "Monthly": "M",
-            "Quarterly": "Q",
-            "Yearly": "Y",
-        }[_reb_label]
-    weight_source = "manual"
-    if source == "Portfolio":
-        weight_source = st.radio(
-            t("backtest.weight_source"),
-            ["shares", "manual"],
-            index=0,
-            format_func=lambda s: t(
-                "backtest.weight_from_shares" if s == "shares" else "backtest.weight_manual"
-            ),
-            key="analysis_weight_source",
-        )
-    run_bt = st.button(t("common.run_backtest"), type="primary")
 
 is_portfolio = source == "Portfolio"
 
@@ -507,6 +407,16 @@ def _compact_metric(
     )
 
 
+def _render_perf_grid(items: list[tuple], cols_per_row: int = 2) -> None:
+    """Render a list of (label, tr_str, pr_str, tr_ret, pr_ret) tuples in a
+    chunked grid. cols_per_row=2 keeps cells readable on phones."""
+    for i in range(0, len(items), cols_per_row):
+        chunk = items[i : i + cols_per_row]
+        cols = st.columns(cols_per_row)
+        for col, args in zip(cols, chunk):
+            _compact_metric(col, *args)
+
+
 st.subheader(t("analysis.past_perf"))
 st.caption(t("analysis.past_perf_caption"))
 if perf_prices.empty or len(perf_prices) < 2:
@@ -515,32 +425,27 @@ else:
     current_pr = float(perf_prices["close"].iloc[-1])
     current_tr = float(perf_prices["adj_close"].iloc[-1])
 
-    cols = st.columns(len(PERF_PERIODS))
-    for (period_label, months), col in zip(PERF_PERIODS, cols):
+    period_items: list[tuple] = []
+    for period_label, months in PERF_PERIODS:
         target = pd.Timestamp(end) - pd.DateOffset(months=months)
         before = perf_prices.loc[:target]
         if before.empty:
-            _compact_metric(col, period_label, "—", "—")
+            period_items.append((period_label, "—", "—", None, None))
             continue
         past_pr = float(before["close"].iloc[-1])
         past_tr = float(before["adj_close"].iloc[-1])
         if past_pr <= 0 or past_tr <= 0:
-            _compact_metric(col, period_label, "—", "—")
+            period_items.append((period_label, "—", "—", None, None))
             continue
         pr_ret = (current_pr / past_pr - 1) * 100
         tr_ret = (current_tr / past_tr - 1) * 100
-        _compact_metric(
-            col,
-            period_label,
-            f"{tr_ret:+.2f}%",
-            f"{pr_ret:+.2f}%",
-            tr_ret=tr_ret,
-            pr_ret=pr_ret,
+        period_items.append(
+            (period_label, f"{tr_ret:+.2f}%", f"{pr_ret:+.2f}%", tr_ret, pr_ret)
         )
+    _render_perf_grid(period_items, cols_per_row=2)
 
-    year_cols = st.columns(5)
-    years = [end.year - i for i in range(5)]
-    for i, y in enumerate(years):
+    year_items: list[tuple] = []
+    for y in [end.year - i for i in range(5)]:
         start_ts = pd.Timestamp(year=y - 1, month=12, day=31)
         end_ts = (
             pd.Timestamp(year=y, month=12, day=31)
@@ -551,25 +456,21 @@ else:
         before_end = perf_prices.loc[:end_ts]
         year_label = t("analysis.ytd", year=y) if y == end.year else str(y)
         if before_start.empty or before_end.empty:
-            _compact_metric(year_cols[i], year_label, "—", "—")
+            year_items.append((year_label, "—", "—", None, None))
             continue
         s_pr = float(before_start["close"].iloc[-1])
         e_pr = float(before_end["close"].iloc[-1])
         s_tr = float(before_start["adj_close"].iloc[-1])
         e_tr = float(before_end["adj_close"].iloc[-1])
         if s_pr <= 0 or s_tr <= 0:
-            _compact_metric(year_cols[i], year_label, "—", "—")
+            year_items.append((year_label, "—", "—", None, None))
             continue
         pr_ret = (e_pr / s_pr - 1) * 100
         tr_ret = (e_tr / s_tr - 1) * 100
-        _compact_metric(
-            year_cols[i],
-            year_label,
-            f"{tr_ret:+.2f}%",
-            f"{pr_ret:+.2f}%",
-            tr_ret=tr_ret,
-            pr_ret=pr_ret,
+        year_items.append(
+            (year_label, f"{tr_ret:+.2f}%", f"{pr_ret:+.2f}%", tr_ret, pr_ret)
         )
+    _render_perf_grid(year_items, cols_per_row=2)
 
 if is_portfolio and not perf_prices.empty and len(perf_prices) >= 2:
     _validate_key = f"_analysis_validate_{portfolio_name}"
@@ -720,34 +621,16 @@ Respond as a markdown numbered list - one short sentence per point, no introduct
             args=(_describe_key,),
         )
 
-indicators = indicators_for(strategy_name, df, **params) if show_indicators else []
-price_overlays = [ind for ind in indicators if ind.panel == "price"]
-sub_indicators = [ind for ind in indicators if ind.panel == "sub"]
-
-metrics = [("Close", f"{df['close'].iloc[-1]:.2f}")]
-for ind in indicators[:3]:
-    value = ind.series.dropna()
-    metrics.append((ind.name, f"{value.iloc[-1]:.2f}" if not value.empty else "—"))
-with st.container(border=True):
-    _mcols = st.columns(len(metrics))
-    for _mcol, (_mname, _mvalue) in zip(_mcols, metrics):
-        _mcol.caption(_mname)
-        _mcol.markdown(f"**{_mvalue}**")
-
-has_sub = bool(sub_indicators)
 price_label = t("analysis.portfolio_value") if is_portfolio else t("analysis.price")
 vol_title = t("analysis.volatility")
 
-# Build the subplot grid: price, [volume,] [strategy sub,] [volatility].
+# Build the subplot grid: price, [volume,] [volatility].
 if is_portfolio:
     row_heights = [1.0]
     subplot_titles = [price_label]
 else:
     row_heights = [0.8, 0.2]
     subplot_titles = [price_label, t("analysis.volume")]
-if has_sub:
-    row_heights.append(0.2)
-    subplot_titles.append(strategy_name)
 if show_volatility:
     row_heights.append(0.2)
     subplot_titles.append(vol_title)
@@ -793,64 +676,10 @@ else:
         col=1,
     )
 
-for ind in price_overlays:
-    fig.add_trace(go.Scatter(x=df.index, y=ind.series, name=ind.name), row=1, col=1)
-
-if show_indicators:
-    signals = signals_for(strategy_name, df, **params)
-    buys = signals[signals == "B"]
-    sells = signals[signals == "S"]
-    span = float((df["high"].max() - df["low"].min()) or 1.0)
-    offset = span * 0.02
-    if not buys.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=buys.index,
-                y=df.loc[buys.index, "low"] - offset,
-                mode="markers+text",
-                marker=dict(symbol="triangle-up", size=11, color="#2ca02c"),
-                text=["B"] * len(buys),
-                textposition="bottom center",
-                textfont=dict(color="black", size=16, family="Arial Black"),
-                name=t("analysis.buy"),
-                hovertemplate=t("analysis.buy") + "<br>%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
-            ),
-            row=1,
-            col=1,
-        )
-    if not sells.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=sells.index,
-                y=df.loc[sells.index, "high"] + offset,
-                mode="markers+text",
-                marker=dict(symbol="triangle-down", size=11, color="#d62728"),
-                text=["S"] * len(sells),
-                textposition="top center",
-                textfont=dict(color="black", size=16, family="Arial Black"),
-                name=t("analysis.sell"),
-                hovertemplate=t("analysis.sell") + "<br>%{x|%Y-%m-%d}<br>%{y:.2f}<extra></extra>",
-            ),
-            row=1,
-            col=1,
-        )
-
 if not is_portfolio:
     fig.add_trace(go.Bar(x=df.index, y=df["volume"], name=t("analysis.volume")), row=2, col=1)
 
 _next_row = 2 if is_portfolio else 3  # row 1 = price, row 2 = volume (single-ticker only)
-if has_sub:
-    for ind in sub_indicators:
-        fig.add_trace(go.Scatter(x=df.index, y=ind.series, name=ind.name), row=_next_row, col=1)
-    seen_hlines: set[float] = set()
-    for ind in sub_indicators:
-        for h in ind.hlines:
-            if h in seen_hlines:
-                continue
-            seen_hlines.add(h)
-            fig.add_hline(y=h, line_dash="dash", line_color="gray", row=_next_row, col=1)
-    _next_row += 1
-
 if show_volatility:
     _vol_series = (
         df["close"].pct_change()
@@ -865,262 +694,9 @@ if show_volatility:
         col=1,
     )
 
-# Give the chart a bit more height when extra panels are on so the price panel
-# doesn't get squeezed below readability.
-_chart_height = 800 + (120 if has_sub else 0) + (120 if show_volatility else 0)
-fig.update_layout(height=_chart_height, xaxis_rangeslider_visible=False, showlegend=True)
+_chart_height = 800 + (120 if show_volatility else 0)
+fig.update_layout(height=_chart_height, xaxis_rangeslider_visible=False, showlegend=show_legend)
 st.plotly_chart(fig, width="stretch")
-
-# ── Backtest run + results ──────────────────────────────────────────────────
-strategy_class = STRATEGIES[strategy_name]
-commission_frac = commission_bps / 10_000
-
-if run_bt:
-    if is_portfolio:
-        # Resolve weight source (with the same soft fallback as the standalone Backtest had).
-        effective_source = weight_source
-        if weight_source == "shares" and not portfolio.has_positions():
-            st.warning(t("backtest.weight_fallback_warn"))
-            effective_source = "manual"
-        with st.spinner(t("analysis.running_portfolio")):
-            prices_by_ticker: dict[str, pd.DataFrame] = {}
-            weights_raw: dict[str, float] = {}
-            for h in portfolio.holdings:
-                prices_by_ticker[h.ticker] = get_prices(h.ticker, start, end)
-            if effective_source == "shares":
-                # Reference price = close on the analysis start date.
-                for h in portfolio.holdings:
-                    pdf = prices_by_ticker[h.ticker]
-                    if pdf.empty:
-                        weights_raw[h.ticker] = 0.0
-                        continue
-                    weights_raw[h.ticker] = float(h.shares) * float(pdf["close"].iloc[0])
-            else:
-                for h in portfolio.holdings:
-                    weights_raw[h.ticker] = h.weight
-            try:
-                if strategy_name == "Buy & Hold":
-                    bt_result = run_portfolio_buy_hold(
-                        prices_by_ticker,
-                        weights_raw,
-                        cash=float(cash),
-                        commission=commission_frac,
-                        rebalance_freq=rebalance_freq,
-                    )
-                else:
-                    bt_result = run_portfolio_backtest(
-                        prices_by_ticker,
-                        weights_raw,
-                        strategy_class,
-                        cash=float(cash),
-                        commission=commission_frac,
-                        **params,
-                    )
-                st.session_state["_analysis_bt"] = {
-                    "mode": "Portfolio",
-                    "strategy_name": strategy_name,
-                    "portfolio_name": portfolio_name,
-                    "rebalance_freq": rebalance_freq,
-                    "result": bt_result,
-                }
-            except ValueError as e:
-                st.error(str(e))
-    else:
-        with st.spinner(t("analysis.running_ticker", ticker=ticker)):
-            try:
-                bt_result = run_backtest(
-                    df, strategy_class, cash=float(cash), commission=commission_frac, **params
-                )
-                st.session_state["_analysis_bt"] = {
-                    "mode": "Single ticker",
-                    "strategy_name": strategy_name,
-                    "ticker": ticker,
-                    "category": category,
-                    "result": bt_result,
-                }
-            except Exception as e:
-                st.error(t("analysis.bt_failed", error=e))
-
-_snap = st.session_state.get("_analysis_bt")
-if _snap is not None:
-    _show = (
-        _snap.get("mode") == "Portfolio"
-        and _snap.get("portfolio_name") == portfolio_name
-        if is_portfolio
-        else _snap.get("mode") == "Single ticker"
-        and _snap.get("ticker") == ticker
-    )
-    if _show:
-        st.divider()
-        _bt_strategy = _snap["strategy_name"]
-        if _snap["mode"] == "Single ticker":
-            st.subheader(t("analysis.bt_title_ticker", ticker=_snap['ticker'], strategy=_bt_strategy))
-            _res = _snap["result"]
-            _stats = _res.stats
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric(t("analysis.metric_return"), f"{_stats['Return [%]']:.2f}%")
-            c2.metric(t("analysis.metric_bh"), f"{_stats['Buy & Hold Return [%]']:.2f}%")
-            c3.metric(t("analysis.metric_sharpe"), f"{_stats['Sharpe Ratio']:.2f}")
-            c4.metric(t("analysis.metric_mdd"), f"{_stats['Max. Drawdown [%]']:.2f}%")
-
-            _eq = _res.equity_curve
-            _fig = go.Figure()
-            _fig.add_trace(go.Scatter(x=_eq.index, y=_eq["Equity"], name=t("analysis.equity_label")))
-            _fig.add_trace(
-                go.Scatter(
-                    x=_eq.index,
-                    y=_eq["DrawdownPct"] * 100,
-                    name=t("analysis.drawdown_label"),
-                    yaxis="y2",
-                )
-            )
-            _fig.update_layout(
-                height=400,
-                yaxis=dict(title=t("analysis.equity_label")),
-                yaxis2=dict(title=t("analysis.drawdown_label"), overlaying="y", side="right"),
-            )
-            st.plotly_chart(_fig, width="stretch")
-
-            with st.expander(t("analysis.trades")):
-                st.dataframe(_res.trades)
-            with st.expander(t("analysis.full_stats")):
-                st.dataframe(_stats.astype(str).to_frame("value"))
-
-            if st.button(t("analysis.explain_btn")):
-                if not llm_available():
-                    st.error(unavailable_message())
-                else:
-                    _prompt = f"""Explain this backtest result for a retail investor.
-
-Strategy: {_bt_strategy}
-Ticker: {_snap['ticker']} ({_snap.get('category', '')})
-Return: {_stats['Return [%]']:.2f}%
-Buy & Hold return: {_stats['Buy & Hold Return [%]']:.2f}%
-Sharpe Ratio: {_stats['Sharpe Ratio']:.2f}
-Max Drawdown: {_stats['Max. Drawdown [%]']:.2f}%
-Number of trades: {int(_stats.get('# Trades', 0))}
-Win rate: {float(_stats.get('Win Rate [%]', 0)):.1f}%
-
-Respond as a markdown numbered list — one short sentence per point, no introduction, no final paragraph:
-1. Did the strategy beat buy-and-hold? By how much?
-2. Was the risk-adjusted return (Sharpe) reasonable?
-3. Was the drawdown psychologically tradeable?
-4. One honest caveat (overfitting, small sample, single-asset, etc.)
-"""
-                    with st.container(border=True):
-                        _full_explain = st.write_stream(ask_llm_stream(_prompt))
-                    st.session_state["_analysis_explain"] = _full_explain
-            else:
-                _stored_explain = st.session_state.get("_analysis_explain")
-                if _stored_explain:
-                    with st.container(border=True):
-                        st.markdown(_stored_explain)
-
-            if st.session_state.get("_analysis_explain"):
-                st.button(
-                    t("analysis.clear_explain"),
-                    key="clear_analysis_explain_single",
-                    on_click=_pop_ss,
-                    args=("_analysis_explain",),
-                )
-
-        else:  # Portfolio
-            _title_suffix = _bt_strategy
-            if _bt_strategy == "Buy & Hold" and _snap.get("rebalance_freq") != "none":
-                _title_suffix += f" (rebalance: {_snap['rebalance_freq']})"
-            st.subheader(
-                t("analysis.bt_title_portfolio", name=_snap['portfolio_name'], strategy=_title_suffix)
-            )
-            _res = _snap["result"]
-            if _res.skipped:
-                st.warning(t("analysis.skipped", list=", ".join(_res.skipped)))
-            _stats = _res.stats
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric(t("analysis.metric_return"), f"{_stats['Return [%]']:.2f}%")
-            c2.metric(t("analysis.metric_sharpe"), f"{_stats['Sharpe Ratio']:.2f}")
-            c3.metric(t("analysis.metric_mdd"), f"{_stats['Max. Drawdown [%]']:.2f}%")
-            c4.metric(t("analysis.metric_final_eq"), f"{_stats['Final Equity']:,.0f}")
-
-            _eq = _res.equity
-            _roll_max = _eq.cummax()
-            _dd = ((_eq / _roll_max) - 1) * 100
-            _fig = go.Figure()
-            _fig.add_trace(go.Scatter(x=_eq.index, y=_eq.values, name=t("analysis.equity_label")))
-            _fig.add_trace(
-                go.Scatter(x=_eq.index, y=_dd.values, name=t("analysis.drawdown_label"), yaxis="y2")
-            )
-            _fig.update_layout(
-                height=400,
-                yaxis=dict(title=t("analysis.equity_label")),
-                yaxis2=dict(title=t("analysis.drawdown_label"), overlaying="y", side="right"),
-            )
-            st.plotly_chart(_fig, width="stretch")
-
-            if _res.per_ticker:
-                per_rows = []
-                for tkr, per_result in _res.per_ticker.items():
-                    s = per_result.stats
-                    per_rows.append(
-                        {
-                            "Ticker": tkr,
-                            "Weight": f"{_res.weights.get(tkr, 0):.1%}",
-                            "Return [%]": round(float(s["Return [%]"]), 2),
-                            "Buy & Hold [%]": round(
-                                float(s["Buy & Hold Return [%]"]), 2
-                            ),
-                            "Sharpe": round(float(s["Sharpe Ratio"]), 2),
-                            "Max DD [%]": round(float(s["Max. Drawdown [%]"]), 2),
-                            "# Trades": int(s.get("# Trades", 0)),
-                        }
-                    )
-                with st.expander(t("analysis.per_ticker_results")):
-                    st.dataframe(pd.DataFrame(per_rows), width="stretch")
-
-            if st.button(t("analysis.explain_btn")):
-                if not llm_available():
-                    st.error(unavailable_message())
-                else:
-                    per_ticker_text = "\n".join(
-                        f"  {r['Ticker']} (weight {r['Weight']}): "
-                        f"return {r['Return [%]']}%, B&H {r['Buy & Hold [%]']}%, "
-                        f"Sharpe {r['Sharpe']}, DD {r['Max DD [%]']}%"
-                        for r in (per_rows if _res.per_ticker else [])
-                    )
-                    _prompt = f"""Explain this portfolio backtest for a retail investor.
-
-Portfolio: {_snap['portfolio_name']}
-Strategy: {_bt_strategy}
-Rebalance: {_snap.get('rebalance_freq', 'n/a')}
-Aggregate return: {_stats['Return [%]']:.2f}%
-Aggregate Sharpe: {_stats['Sharpe Ratio']:.2f}
-Aggregate Max Drawdown: {_stats['Max. Drawdown [%]']:.2f}%
-Final equity: {_stats['Final Equity']:,.0f}
-
-Per-ticker results:
-{per_ticker_text}
-
-Respond as a markdown numbered list — one short sentence per point, no introduction, no final paragraph:
-1. Did the portfolio-level strategy produce a reasonable risk-adjusted return?
-2. Which holdings carried the portfolio? Which ones hurt it?
-3. Was the diversification helpful (lower drawdown than any single name)?
-4. One honest caveat about applying the same strategy to very different assets.
-"""
-                    with st.container(border=True):
-                        _full_explain = st.write_stream(ask_llm_stream(_prompt))
-                    st.session_state["_analysis_explain"] = _full_explain
-            else:
-                _stored_explain = st.session_state.get("_analysis_explain")
-                if _stored_explain:
-                    with st.container(border=True):
-                        st.markdown(_stored_explain)
-
-            if st.session_state.get("_analysis_explain"):
-                st.button(
-                    t("analysis.clear_explain"),
-                    key="clear_analysis_explain_portfolio",
-                    on_click=_pop_ss,
-                    args=("_analysis_explain",),
-                )
 
 with st.expander(t("analysis.raw_data")):
     st.dataframe(df.tail(100))

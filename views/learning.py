@@ -9,7 +9,6 @@ _CONTENT: dict[str, dict] = {
     "en": {
         "title": "Learning — strategies",
         "intro": """
-The Backtest page offers eight strategies across two broad camps:
 
 **Passive / allocation-oriented (realistic baselines for retail investors):**
 - **Buy & Hold** — the benchmark everything else is measured against
@@ -226,28 +225,11 @@ loss, and they add up quickly. Also: Donchian buys *after* the breakout, so
 you're never catching the absolute low.
 """,
         },
-        "how_to_read": """
-### How to read the backtest results
-
-- **Return [%]** — total strategy return over the backtest period.
-- **Buy & Hold [%]** — what a passive investor would have earned. If your strategy
-  underperforms this, the complexity isn't paying off.
-- **Sharpe Ratio** — return per unit of volatility. Rough guide: < 1 is mediocre,
-  1–2 is good, > 2 is suspicious (check for overfitting).
-- **Max Drawdown [%]** — worst peak-to-trough loss along the way. A strategy
-  with high return but 60% drawdown is psychologically very hard to trade.
-
-**A note on overfitting.** Tuning parameters until backtest returns look great
-almost always produces worse live results. A robust strategy works across a range
-of parameter values, not just one. If a small parameter tweak changes the outcome
-dramatically, the strategy is brittle.
-""",
     },
 
     "fr": {
         "title": "Apprentissage — stratégies",
         "intro": """
-La page Test rétroactif propose huit stratégies réparties en deux grandes familles :
 
 **Passives / orientées répartition (bases réalistes pour l'investisseur particulier) :**
 - **Achat-et-conservation** — la référence à laquelle tout le reste se compare
@@ -492,24 +474,6 @@ une petite perte, et elles s'additionnent vite. De plus : Donchian achète
 *après* la cassure, donc on n'attrape jamais le creux absolu.
 """,
         },
-        "how_to_read": """
-### Comment lire les résultats du test rétroactif
-
-- **Rendement [%]** — rendement total de la stratégie sur la période du test.
-- **Achat-et-conservation [%]** — ce qu'aurait gagné un investisseur passif. Si
-  votre stratégie fait moins bien, la complexité ne rapporte pas.
-- **Ratio de Sharpe** — rendement par unité de volatilité. Repère approximatif :
-  < 1 est médiocre, 1–2 est bon, > 2 est suspect (vérifiez le surajustement).
-- **Repli max. [%]** — pire perte du sommet au creux pendant la période. Une
-  stratégie avec un bon rendement mais un repli de 60 % est très difficile à
-  suivre psychologiquement.
-
-**Une note sur le surajustement.** Régler les paramètres jusqu'à obtenir de
-superbes rendements de test rétroactif produit presque toujours de moins bons
-résultats en conditions réelles. Une stratégie robuste fonctionne pour une
-plage de valeurs de paramètres, pas pour une seule. Si un petit ajustement
-change radicalement le résultat, la stratégie est fragile.
-""",
     },
 }
 
@@ -526,6 +490,3 @@ for _i, _key in enumerate(_SECTIONS):
     _entry = _c[_key]
     with st.expander(_entry["title"], expanded=_i == 0):
         st.markdown(_entry["body"])
-
-st.divider()
-st.markdown(_c["how_to_read"])

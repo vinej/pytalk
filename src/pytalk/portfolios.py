@@ -84,10 +84,19 @@ def _ensure_holdings_columns(con) -> None:
                 pass  # raced or already added
 
 
+_SCHEMA_READY = False
+
+
 def _connect():
+    """Schema/column ensure runs once per process — they're idempotent DDL but
+    each call costs an HTTP roundtrip on Turso, which compounds badly when the
+    same page renders 4+ portfolios."""
+    global _SCHEMA_READY
     con = connect()
-    ensure_schema(con, _SCHEMA_STATEMENTS)
-    _ensure_holdings_columns(con)
+    if not _SCHEMA_READY:
+        ensure_schema(con, _SCHEMA_STATEMENTS)
+        _ensure_holdings_columns(con)
+        _SCHEMA_READY = True
     return con
 
 
@@ -112,6 +121,47 @@ def list_portfolios(user_email: str) -> list[str]:
         return [r[0] for r in rows]
     finally:
         con.close()
+
+
+def get_all_portfolios(user_email: str) -> list[Portfolio]:
+    """Fetch every portfolio + all its holdings in 2 queries instead of 1+N.
+
+    The portfolios page renders every portfolio for the user; the per-portfolio
+    `get_portfolio` loop was the dominant cost on Turso (HTTP per query).
+    """
+    e = _require_email(user_email)
+    con = _connect()
+    try:
+        port_rows = con.execute(
+            "SELECT name FROM portfolios WHERE user_email = ? ORDER BY name", (e,)
+        ).fetchall()
+        names = [r[0] for r in port_rows]
+        if not names:
+            return []
+        h_rows = con.execute(
+            """
+            SELECT portfolio_name, ticker, category, weight, shares, buy_date
+            FROM portfolio_holdings
+            WHERE user_email = ?
+            ORDER BY portfolio_name, ticker
+            """,
+            (e,),
+        ).fetchall()
+    finally:
+        con.close()
+
+    holdings_by_portfolio: dict[str, list[Holding]] = {n: [] for n in names}
+    for pn, tk, cat, w, sh, bd in h_rows:
+        holdings_by_portfolio.setdefault(pn, []).append(
+            Holding(
+                ticker=tk,
+                category=cat,
+                weight=float(w or 1.0),
+                shares=float(sh or 0.0),
+                buy_date=bd or None,
+            )
+        )
+    return [Portfolio(name=n, holdings=holdings_by_portfolio.get(n, [])) for n in names]
 
 
 def get_portfolio(user_email: str, name: str) -> Portfolio | None:
