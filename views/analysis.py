@@ -16,7 +16,7 @@ from pytalk.custom_tickers import (
 )
 from pytalk.data import detect_category, get_currency
 from pytalk.i18n import category_label, t
-from pytalk.indicators import rsi
+from pytalk.indicators import rsi, sma
 from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
 from pytalk.portfolios import get_portfolio, list_portfolios
 from pytalk.universe import CATEGORIES, OTHER, UNIVERSE, label, tickers
@@ -98,6 +98,30 @@ with st.sidebar:
         )
     else:
         vol_window = 21
+
+    show_smas = st.checkbox(
+        t("common.show_smas"), value=False, key="analysis_show_smas"
+    )
+    if show_smas:
+        sma_fast_window = st.slider(
+            t("backtest.sma_fast"), 5, 250, 50, key="analysis_ref_sma_fast"
+        )
+        sma_slow_window = st.slider(
+            t("backtest.sma_slow"), 20, 500, 200, key="analysis_ref_sma_slow"
+        )
+    else:
+        sma_fast_window, sma_slow_window = 50, 200
+
+    show_rsi = st.checkbox(
+        t("common.show_rsi"), value=False, key="analysis_show_rsi"
+    )
+    if show_rsi:
+        rsi_window = st.slider(
+            t("backtest.rsi_window"), 2, 50, 14, key="analysis_ref_rsi_window"
+        )
+    else:
+        rsi_window = 14
+
     show_legend = st.checkbox(
         t("common.show_legend"), value=True, key="analysis_show_legend"
     )
@@ -626,14 +650,18 @@ Respond as a markdown numbered list - one short sentence per point, no introduct
 
 price_label = t("analysis.portfolio_value") if is_portfolio else t("analysis.price")
 vol_title = t("analysis.volatility")
+rsi_title = f"RSI {rsi_window}"
 
-# Build the subplot grid: price, [volume,] [volatility].
+# Build the subplot grid: price, [volume,] [rsi,] [volatility].
 if is_portfolio:
     row_heights = [1.0]
     subplot_titles = [price_label]
 else:
     row_heights = [0.8, 0.2]
     subplot_titles = [price_label, t("analysis.volume")]
+if show_rsi:
+    row_heights.append(0.2)
+    subplot_titles.append(rsi_title)
 if show_volatility:
     row_heights.append(0.2)
     subplot_titles.append(vol_title)
@@ -679,10 +707,41 @@ else:
         col=1,
     )
 
+if show_smas:
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=sma(df["close"], int(sma_fast_window)),
+            name=f"SMA {sma_fast_window}",
+            line=dict(color="#1f77b4", width=1.5),
+        ),
+        row=1, col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=sma(df["close"], int(sma_slow_window)),
+            name=f"SMA {sma_slow_window}",
+            line=dict(color="#ff7f0e", width=1.5),
+        ),
+        row=1, col=1,
+    )
+
 if not is_portfolio:
     fig.add_trace(go.Bar(x=df.index, y=df["volume"], name=t("analysis.volume")), row=2, col=1)
 
 _next_row = 2 if is_portfolio else 3  # row 1 = price, row 2 = volume (single-ticker only)
+
+if show_rsi:
+    _rsi_series = rsi(df["close"], int(rsi_window))
+    fig.add_trace(
+        go.Scatter(x=df.index, y=_rsi_series, name=rsi_title, line=dict(color="#2ca02c")),
+        row=_next_row, col=1,
+    )
+    fig.add_hline(y=30, line_dash="dash", line_color="gray", row=_next_row, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="gray", row=_next_row, col=1)
+    _next_row += 1
+
 if show_volatility:
     _vol_series = (
         df["close"].pct_change()
@@ -697,7 +756,7 @@ if show_volatility:
         col=1,
     )
 
-_chart_height = 800 + (120 if show_volatility else 0)
+_chart_height = 800 + (120 if show_volatility else 0) + (120 if show_rsi else 0)
 fig.update_layout(height=_chart_height, xaxis_rangeslider_visible=False, showlegend=show_legend)
 st.plotly_chart(fig, width="stretch")
 

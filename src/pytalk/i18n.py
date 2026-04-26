@@ -113,6 +113,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "common.commission_bps":  {"en": "Commission (bps per trade)", "fr": "Commission (pb par transaction)"},
     "common.show_indicators": {"en": "Show indicators", "fr": "Afficher les indicateurs"},
     "common.show_volatility": {"en": "Show volatility", "fr": "Afficher la volatilité"},
+    "common.show_smas":       {"en": "Show SMAs",       "fr": "Afficher les MMS"},
+    "common.show_rsi":        {"en": "Show RSI",        "fr": "Afficher le RSI"},
     "common.show_legend":     {"en": "Show chart legend", "fr": "Afficher la légende"},
     "common.vol_window":      {"en": "Volatility window (days)", "fr": "Fenêtre de volatilité (jours)"},
     "common.rebalance_freq":  {"en": "Rebalance frequency", "fr": "Fréquence de rééquilibrage"},
