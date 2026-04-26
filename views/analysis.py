@@ -407,12 +407,15 @@ def _compact_metric(
     )
 
 
-def _render_perf_grid(items: list[tuple], cols_per_row: int = 2) -> None:
-    """Render a list of (label, tr_str, pr_str, tr_ret, pr_ret) tuples in a
-    chunked grid. cols_per_row=2 keeps cells readable on phones."""
-    for i in range(0, len(items), cols_per_row):
-        chunk = items[i : i + cols_per_row]
-        cols = st.columns(cols_per_row)
+def _render_perf_grid(items: list[tuple], cols_per_row: int | None = None) -> None:
+    """Render (label, tr_str, pr_str, tr_ret, pr_ret) tuples as a single-row grid.
+
+    cols_per_row defaults to len(items) so all cells fit side-by-side on desktop;
+    Streamlit auto-stacks them vertically on narrow viewports (phones)."""
+    n = cols_per_row or max(len(items), 1)
+    for i in range(0, len(items), n):
+        chunk = items[i : i + n]
+        cols = st.columns(n)
         for col, args in zip(cols, chunk):
             _compact_metric(col, *args)
 
@@ -442,7 +445,7 @@ else:
         period_items.append(
             (period_label, f"{tr_ret:+.2f}%", f"{pr_ret:+.2f}%", tr_ret, pr_ret)
         )
-    _render_perf_grid(period_items, cols_per_row=2)
+    _render_perf_grid(period_items)
 
     year_items: list[tuple] = []
     for y in [end.year - i for i in range(5)]:
@@ -470,7 +473,7 @@ else:
         year_items.append(
             (year_label, f"{tr_ret:+.2f}%", f"{pr_ret:+.2f}%", tr_ret, pr_ret)
         )
-    _render_perf_grid(year_items, cols_per_row=2)
+    _render_perf_grid(year_items)
 
 if is_portfolio and not perf_prices.empty and len(perf_prices) >= 2:
     _validate_key = f"_analysis_validate_{portfolio_name}"
