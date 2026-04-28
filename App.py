@@ -1,3 +1,15 @@
+"""PyTalk entry point.
+
+Top-to-bottom flow on every Streamlit rerun:
+    1. set_page_config           — must be the first Streamlit call
+    2. Auth gate                 — st.user.is_logged_in, then email allowlist
+    3. Cross-user session reset  — wipe state when a different user signs in
+    4. Widget-state preservation — keep cross-page widget values alive
+    5. Multi-page navigation     — one st.Page per views/*.py
+    6. Sidebar branding + lang selector
+
+See ARCHITECTURE.md for the full picture (auth, persistence, i18n).
+"""
 from __future__ import annotations
 
 import logging
@@ -11,15 +23,21 @@ from pytalk.i18n import language_selector, t
 # loop. The widgets still work correctly (session-state wins, default is ignored).
 logging.getLogger("streamlit.elements.lib.policies").setLevel(logging.ERROR)
 
+# MUST be the first Streamlit call — Streamlit raises if widgets/output happen first.
 st.set_page_config(page_title="PyTalk", page_icon="assets/favicon.svg", layout="wide")
 
 
 def _allowed_emails() -> set[str]:
+    """Family allowlist from secrets.toml — empty list disables the gate (anyone
+    with a valid OIDC login can enter)."""
     raw = st.secrets.get("access", {}).get("allowed_emails", [])
     return {str(e).strip().lower() for e in raw if e}
 
 
 # ── Auth gate ────────────────────────────────────────────────────────────────
+# Microsoft consumer OIDC (configured in [auth] in secrets.toml). st.stop() halts
+# the script — nothing below this block runs until the user is signed in AND
+# their email is on the allowlist.
 if not st.user.is_logged_in:
     language_selector()
     st.title("PyTalk")
@@ -27,6 +45,8 @@ if not st.user.is_logged_in:
     st.button(t("auth.signin"), on_click=st.login, type="primary")
     st.stop()
 
+# Microsoft sometimes only sends one of `email` / `preferred_username` depending
+# on the account type — try email first, fall back to preferred_username.
 _user_email = (st.user.email or st.user.get("preferred_username", "")).lower().strip()
 _allowlist = _allowed_emails()
 
@@ -36,8 +56,10 @@ if _allowlist and _user_email not in _allowlist:
     st.button(t("auth.signout"), on_click=st.logout)
     st.stop()
 
+# ── Cross-user session reset ────────────────────────────────────────────────
 # Clear session state if a different user signs in on this browser — prevents
-# the previous user's portfolio edits / validations / selections from leaking.
+# the previous user's portfolio edits / form values / cached LLM responses from
+# leaking visually. The `_current_user` sentinel is what we compare against.
 if st.session_state.get("_current_user") != _user_email:
     for _k in list(st.session_state.keys()):
         if _k == "_current_user":
@@ -48,9 +70,12 @@ if st.session_state.get("_current_user") != _user_email:
             pass
     st.session_state["_current_user"] = _user_email
 
-# Preserve widget state across page navigation. Runs on EVERY page render so
-# keys from views that aren't currently active (e.g. Analysis's `Source` radio
-# while you're on Info) don't get garbage-collected by Streamlit.
+# ── Cross-page widget preservation ──────────────────────────────────────────
+# Streamlit garbage-collects session_state keys belonging to widgets that aren't
+# rendered on the current page. The loop below "touches" every non-button key
+# on every render so widgets on other pages keep their values when you come
+# back. Buttons are excluded because re-assigning a button key fires its
+# callback on every rerun (infinite loop).
 _BUTTON_HINTS = (
     "_rm_", "_back_", "_add", "_save", "_del_", "_explain",
     "save_", "del_", "clear_", "FormSubmitter",
@@ -64,6 +89,7 @@ for _k in list(st.session_state.keys()):
     except Exception:
         pass
 
+# ── Navigation ──────────────────────────────────────────────────────────────
 nav = st.navigation(
     [
         st.Page("views/brand.py", title="PyTalk", icon="📈", default=True),

@@ -1,3 +1,18 @@
+"""Portfolios view — create new portfolios and edit existing ones.
+
+State model: each editable portfolio (creation form OR an existing portfolio's
+expander) keeps its own list of "row dicts" in `st.session_state` under a
+unique state_key. A row dict has shape:
+    {id, category, ticker, weight, shares, buy_date, custom}
+The list is mutated in place during a render (delete a row, change a ticker,
+flip the custom flag) and Streamlit reruns to reflect changes.
+
+When the user clicks Save we materialize the row list into Holding objects and
+persist via `save_portfolio` (one DELETE-then-INSERT transaction for atomicity).
+
+See ARCHITECTURE.md → "Streamlit execution model" for why state_key + st.rerun
+is the natural pattern here.
+"""
 from __future__ import annotations
 
 import uuid
@@ -17,7 +32,8 @@ from pytalk.portfolios import (
 )
 from pytalk.universe import CATEGORIES, CUSTOM_CATEGORY, OTHER, UNIVERSE, label, tickers
 
-# Portfolio holdings should have a real asset class, not the meta "Custom Ticker"
+# Holdings have a real asset class — the meta "Custom Ticker" category is for
+# the Custom Tickers list page, not for individual holdings.
 _ROW_CATEGORIES = [c for c in CATEGORIES if c != CUSTOM_CATEGORY]
 
 CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
@@ -48,6 +64,9 @@ def _blank_row() -> dict:
 
 
 def _init_rows(state_key: str, holdings: list[Holding]) -> None:
+    """Seed a portfolio's row state once per session — subsequent reruns reuse
+    whatever the user has edited. The `custom` flag flips on for any ticker
+    that isn't in the built-in `tickers(category)` list (e.g. user-added)."""
     if state_key in st.session_state:
         return
     st.session_state[state_key] = [
@@ -96,9 +115,14 @@ def _holdings_editor(state_key: str) -> list[Holding]:
 
         symbols = combined_symbols(CURRENT_USER, category)
         # If stored ticker isn't in this category's list, treat row as custom.
+        # This auto-flips when the user changes the category and the existing
+        # ticker isn't valid under the new one.
         if row["ticker"] and row["ticker"] not in symbols:
             row["custom"] = True
 
+        # Two render branches:
+        #   custom=True  → free-form text input + "↩" button to switch back
+        #   custom=False → selectbox of known symbols + the special OTHER sentinel
         if row["custom"]:
             with cols[1]:
                 sub = st.columns([5, 1])
@@ -162,6 +186,9 @@ def _holdings_editor(state_key: str) -> list[Holding]:
         if cols[4].button("✕", key=f"{state_key}_rm_{rid}", help=t("portfolios.remove")):
             to_remove = rid
 
+    # Mutate-then-rerun pattern: deletions/additions modify session_state and
+    # force a fresh render. Doing it inline (without rerun) would render stale
+    # state because Streamlit already drew the row above.
     if to_remove is not None:
         st.session_state[state_key] = [r for r in rows if r["id"] != to_remove]
         st.rerun()
@@ -170,14 +197,16 @@ def _holdings_editor(state_key: str) -> list[Holding]:
         st.session_state[state_key].append(_blank_row())
         st.rerun()
 
+    # Materialize Holding list. Dedupe on ticker so a row with no ticker (just
+    # added, not filled in yet) gets dropped, and accidental duplicates collapse.
     seen: set[str] = set()
     holdings: list[Holding] = []
     for row in st.session_state[state_key]:
         if not row["ticker"] or row["ticker"] in seen:
             continue
         seen.add(row["ticker"])
-        # Keep weight at 1.0 going forward — it's only used as a fallback for
-        # holdings that don't have shares set. New rows always have shares.
+        # weight=1.0 is a legacy fallback used only when shares aren't set.
+        # New rows always have shares; weight stays informational.
         holdings.append(
             Holding(
                 ticker=row["ticker"],
@@ -190,6 +219,7 @@ def _holdings_editor(state_key: str) -> list[Holding]:
     return holdings
 
 
+# ── Create new portfolio ────────────────────────────────────────────────────
 st.header(t("portfolios.create_header"))
 _init_rows("_create_rows", [])
 new_name = st.text_input(
@@ -210,6 +240,10 @@ if st.button(t("portfolios.save"), type="primary", key="_create_save"):
         st.error(str(e))
 
 st.divider()
+
+# ── Existing portfolios ─────────────────────────────────────────────────────
+# `get_all_portfolios` fetches every portfolio + holdings in 2 queries instead
+# of 1+N — important on Turso where each query is an HTTP roundtrip.
 st.header(t("portfolios.existing"))
 
 portfolios_all = get_all_portfolios(CURRENT_USER)

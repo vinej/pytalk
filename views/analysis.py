@@ -1,3 +1,20 @@
+"""Analysis view — chart a single ticker or a portfolio.
+
+Two modes (chosen by sidebar radio, drives the rest of the page):
+
+    Single ticker  → fetch prices, draw candlestick + volume, optional indicators
+    Portfolio      → load holdings, build either a "real value" or "rebased to 100"
+                     equity curve, show holdings P&L table, draw line chart
+
+Portfolio mode has two sub-flavors:
+    has_positions  → every holding has shares + buy_date → real-dollar value series
+    legacy         → at least one holding lacks shares → fall back to weight-based
+                     rebased-to-100 series with a warning
+
+The page also renders a Past Performance grid (TR vs PR returns over fixed windows
++ calendar years), and an optional LLM blurb (validate portfolio / describe ticker).
+See ARCHITECTURE.md for the broader picture.
+"""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -33,6 +50,7 @@ def _pop_ss(key: str) -> None:
     """Callback helper — drops a session_state key before Streamlit's auto-rerun."""
     st.session_state.pop(key, None)
 
+# ── Sidebar: source + ticker/portfolio + lookback + chart toggles ───────────
 with st.sidebar:
     source = st.radio(
         t("common.source"),
@@ -226,6 +244,9 @@ def _holdings_pnl(holdings, end_d: date) -> tuple[list[dict], dict[str, float]]:
 
     Skips holdings without shares or buy_date. Buy price is the first available
     close on/after buy_date; current price is the last close on/before end_d.
+
+    `current_values_by_ticker` is reused upstream to derive *current* portfolio
+    weights (vs the static target weight stored on each Holding).
     """
     rows: list[dict] = []
     values: dict[str, float] = {}
@@ -274,6 +295,7 @@ def _holdings_pnl(holdings, end_d: date) -> tuple[list[dict], dict[str, float]]:
     return rows, values
 
 
+# ── Load data: portfolio path vs single-ticker path ─────────────────────────
 if is_portfolio:
     if not portfolio_name:
         st.info(t("common.pick_portfolio"))
@@ -399,6 +421,11 @@ else:
         _title += f" in {_currency}"
     st.title(_title)
 
+# ── Past performance: separate price load over a longer window ──────────────
+# We load up to 10y of history (PERF_PERIODS[-1] = 120 months) regardless of
+# the user's chart lookback, so the perf grid can show 10y returns even when
+# the chart only shows 1y. The +30-day buffer guards against weekends/holidays
+# at the edge of each period boundary.
 PERF_PERIODS = [("6m", 6), ("1y", 12), ("2y", 24), ("5y", 60), ("10y", 120)]
 _perf_start = (
     pd.Timestamp(end) - pd.DateOffset(months=PERF_PERIODS[-1][1])
@@ -648,6 +675,12 @@ Respond as a markdown numbered list - one short sentence per point, no introduct
             args=(_describe_key,),
         )
 
+# ── Chart: dynamic subplot grid ─────────────────────────────────────────────
+# Rows are added in a fixed order so `_next_row` arithmetic stays predictable:
+#     row 1: price (always)
+#     row 2: volume (single-ticker only — portfolios have no volume)
+#     row 3+: RSI panel, volatility panel — appended in that order if enabled
+# `row_heights` is renormalized so the totals always sum to 1.0.
 price_label = t("analysis.portfolio_value") if is_portfolio else t("analysis.price")
 vol_title = t("analysis.volatility")
 rsi_title = f"RSI {rsi_window}"
