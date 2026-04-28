@@ -16,6 +16,7 @@ import logging
 
 import streamlit as st
 
+from pytalk.auth import current_user
 from pytalk.i18n import language_selector, t
 
 # Silence the benign "widget created with default value but also had its value
@@ -45,9 +46,7 @@ if not st.user.is_logged_in:
     st.button(t("auth.signin"), on_click=st.login, type="primary")
     st.stop()
 
-# Microsoft sometimes only sends one of `email` / `preferred_username` depending
-# on the account type — try email first, fall back to preferred_username.
-_user_email = (st.user.email or st.user.get("preferred_username", "")).lower().strip()
+_user_email = current_user()
 _allowlist = _allowed_emails()
 
 if _allowlist and _user_email not in _allowlist:

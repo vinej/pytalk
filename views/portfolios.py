@@ -20,9 +20,10 @@ from datetime import date
 
 import streamlit as st
 
+from pytalk.auth import current_user
 from pytalk.custom_tickers import combined_label, combined_symbols
 from pytalk.i18n import category_label, t
-from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
+from pytalk.llm import build_validate_portfolio_prompt
 from pytalk.portfolios import (
     Holding,
     Portfolio,
@@ -30,22 +31,18 @@ from pytalk.portfolios import (
     get_all_portfolios,
     save_portfolio,
 )
-from pytalk.universe import CATEGORIES, CUSTOM_CATEGORY, OTHER, UNIVERSE, label, tickers
+from pytalk.ui import render_llm_block
+from pytalk.universe import CATEGORIES, CUSTOM_CATEGORY, OTHER, label, tickers
 
 # Holdings have a real asset class — the meta "Custom Ticker" category is for
 # the Custom Tickers list page, not for individual holdings.
 _ROW_CATEGORIES = [c for c in CATEGORIES if c != CUSTOM_CATEGORY]
 
-CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
+CURRENT_USER = current_user()
 
 # Widget-state preservation is handled once in App.py.
 
 st.title(t("nav.portfolios"))
-
-
-def _pop_ss(key: str) -> None:
-    """Callback helper — drops a session_state key before Streamlit's auto-rerun."""
-    st.session_state.pop(key, None)
 
 
 def _blank_row() -> dict:
@@ -281,56 +278,16 @@ for portfolio in portfolios_all:
             normalized = ", ".join(f"{h.ticker}: {h.weight/total:.1%}" for h in edited)
             st.caption(t("portfolios.normalized", text=normalized))
 
-        _validate_key = f"_portfolios_validate_{name}"
-        if st.button(t("portfolios.validate_btn"), key=f"validate_btn_{name}"):
-            if not llm_available():
-                st.error(unavailable_message())
-            elif not edited or total <= 0:
-                st.warning(t("portfolios.save_first"))
-            else:
-                holdings_text = "\n".join(
-                    f"  - {h.ticker} ({h.category}) "
-                    f"[{UNIVERSE.get(h.category, {}).get(h.ticker) or 'custom'}] — "
-                    f"{h.weight/total:.1%}"
-                    for h in edited
-                )
-                by_type = {}
-                for h in edited:
-                    by_type[h.category] = by_type.get(h.category, 0.0) + h.weight / total
-                mix_text = ", ".join(f"{t}: {w:.1%}" for t, w in by_type.items())
-
-                prompt = f"""Review this portfolio structure.
-
-Name: {name}
-Total holdings: {len(edited)}
-Asset-type mix: {mix_text}
-
-Holdings:
-{holdings_text}
-
-Respond as a markdown numbered list — one short sentence per point, no introduction, no final paragraph:
-1. Overall diversification — across asset classes, geography, and sectors.
-2. Concentration risks — any single holding or type too dominant?
-3. Overlap — do multiple holdings track the same thing (e.g. two S&P 500 ETFs)?
-4. What kind of investor this portfolio suits (growth / income / capital preservation).
-5. One honest caveat (hidden correlations, home-bias, missing asset classes, etc.).
-6. One constructive observation — what would make it more robust, without recommending specific tickers.
-
-Don't invent facts about any holding you don't recognise; just say "unfamiliar".
-"""
-                with st.container(border=True):
-                    _full = st.write_stream(ask_llm_stream(prompt))
-                st.session_state[_validate_key] = _full
-        else:
-            _stored = st.session_state.get(_validate_key)
-            if _stored:
-                with st.container(border=True):
-                    st.markdown(_stored)
-
-        if st.session_state.get(_validate_key):
-            st.button(
-                t("portfolios.clear_validation"),
-                key=f"clear_portfolios_validate_{name}",
-                on_click=_pop_ss,
-                args=(_validate_key,),
-            )
+        _can_validate = bool(edited) and total > 0
+        render_llm_block(
+            f"portfolios_validate_{name}",
+            button_label=t("portfolios.validate_btn"),
+            clear_label=t("portfolios.clear_validation"),
+            prompt_fn=lambda edited=edited, total=total: build_validate_portfolio_prompt(
+                name=name,
+                holdings=edited,
+                weights={h.ticker: h.weight / total for h in edited},
+            ),
+            can_run=_can_validate,
+            blocked_message=t("portfolios.save_first"),
+        )

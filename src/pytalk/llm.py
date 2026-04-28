@@ -195,3 +195,149 @@ def ask_llm(
 ask_ollama_stream = ask_llm_stream
 ask_ollama = ask_llm
 ollama_available = llm_available
+
+
+# ── Prompt builders ─────────────────────────────────────────────────────────
+# Centralizing prompt text here keeps wording consistent across views and
+# makes the templates testable in isolation. The LLM language is set via
+# `_active_language_directive()` on top of SYSTEM_PROMPT — prompt bodies stay
+# in English regardless of UI language.
+
+
+def build_validate_portfolio_prompt(
+    *,
+    name: str,
+    holdings,
+    weights: dict[str, float],
+) -> str:
+    """Build the standard "review this portfolio structure" prompt.
+
+    `holdings` is any iterable of objects with `.ticker` and `.category`.
+    `weights` maps ticker → fractional weight (caller decides whether weights
+    come from declared targets or from current dollar values).
+    """
+    from pytalk.universe import UNIVERSE  # local — avoid circular at import time
+
+    holdings_list = list(holdings)
+    by_type: dict[str, float] = {}
+    for h in holdings_list:
+        by_type[h.category] = by_type.get(h.category, 0.0) + weights[h.ticker]
+    mix_text = ", ".join(f"{cat}: {w:.1%}" for cat, w in by_type.items())
+    holdings_text = "\n".join(
+        f"  - {h.ticker} ({h.category}) "
+        f"[{UNIVERSE.get(h.category, {}).get(h.ticker) or 'custom'}] — "
+        f"{weights[h.ticker]:.1%}"
+        for h in holdings_list
+    )
+    return f"""Review this portfolio structure.
+
+Name: {name}
+Total holdings: {len(holdings_list)}
+Asset-type mix: {mix_text}
+
+Holdings:
+{holdings_text}
+
+Respond as a markdown numbered list — one short sentence per point, no introduction, no final paragraph:
+1. Overall diversification — across asset classes, geography, and sectors.
+2. Concentration risks — any single holding or type too dominant?
+3. Overlap — do multiple holdings track the same thing (e.g. two S&P 500 ETFs)?
+4. What kind of investor this portfolio suits (growth / income / capital preservation).
+5. One honest caveat (hidden correlations, home-bias, missing asset classes, etc.).
+6. One constructive observation — what would make it more robust, without recommending specific tickers.
+
+Don't invent facts about any holding you don't recognise; just say "unfamiliar".
+"""
+
+
+def build_describe_ticker_prompt(
+    *,
+    ticker: str,
+    name: str,
+    perf_prices,
+    currency: str,
+    end,
+) -> str:
+    """Build the standard "describe this ticker" prompt.
+
+    Computes a small bundle of indicators (SMA 20/50/200, RSI 14, 52w
+    position, 1y annualized volatility, implied dividend yield from TR-PR
+    gap) from `perf_prices` (a DataFrame with `close` + `adj_close`) and
+    embeds the snapshot into the prompt body.
+    """
+    import pandas as pd  # local — keep llm.py importable without pandas install
+
+    from pytalk.indicators import rsi
+
+    close = perf_prices["close"]
+    adj = perf_prices["adj_close"]
+    curr = float(close.iloc[-1])
+
+    def _last(s) -> float | None:
+        v = s.dropna()
+        return float(v.iloc[-1]) if not v.empty else None
+
+    sma20 = _last(close.rolling(20).mean())
+    sma50 = _last(close.rolling(50).mean())
+    sma200 = _last(close.rolling(200).mean())
+    rsi14 = _last(rsi(close, 14))
+
+    year_close = close.loc[pd.Timestamp(end) - pd.DateOffset(months=12) :]
+    pos_52w: float | None = None
+    vol: float | None = None
+    if not year_close.empty and year_close.max() > year_close.min():
+        pos_52w = (
+            (curr - float(year_close.min()))
+            / (float(year_close.max()) - float(year_close.min()))
+            * 100
+        )
+    year_rets = year_close.pct_change().dropna()
+    if len(year_rets) > 20:
+        vol = float(year_rets.std()) * (252 ** 0.5) * 100
+
+    # 1y TR vs PR → implied dividend yield
+    target_1y = pd.Timestamp(end) - pd.DateOffset(months=12)
+    before_1y = perf_prices.loc[:target_1y]
+    div_text = "n/a"
+    if not before_1y.empty:
+        past_pr = float(before_1y["close"].iloc[-1])
+        past_tr = float(before_1y["adj_close"].iloc[-1])
+        if past_pr > 0 and past_tr > 0:
+            pr_1y = (curr / past_pr - 1) * 100
+            tr_1y = (float(adj.iloc[-1]) / past_tr - 1) * 100
+            gap = tr_1y - pr_1y
+            if gap > 0.5:
+                div_text = f"~{gap:.1f}% (meaningful dividend contribution)"
+            elif gap > 0.05:
+                div_text = f"~{gap:.2f}% (small dividend)"
+            else:
+                div_text = "negligible / no dividend"
+
+    def _fmt(v: float | None, suffix: str = "") -> str:
+        return "—" if v is None else f"{v:.2f}{suffix}"
+
+    name_bit = f" ({name})" if name else ""
+    return f"""Summarize the current technical state of {ticker}{name_bit}.
+
+Current price: {curr:.2f} {currency or ''}
+Moving averages:
+  SMA 20:  {_fmt(sma20)}
+  SMA 50:  {_fmt(sma50)}
+  SMA 200: {_fmt(sma200)}
+Momentum:
+  RSI(14): {_fmt(rsi14)}
+Range:
+  52-week position: {_fmt(pos_52w, '%')} (0 = at 52w low, 100 = at 52w high)
+Risk:
+  Annualized volatility (1y): {_fmt(vol, '%')}
+Dividend character:
+  1y TR-PR gap: {div_text}
+
+Respond as a markdown numbered list - one short sentence per point, no introduction, no final paragraph:
+1. Trend — where the price sits vs SMA 50 and SMA 200, what that suggests.
+2. Momentum — what RSI(14) and recent moves imply (overbought / neutral / oversold).
+3. Volatility regime — calm, elevated, or extreme compared to normal equity (~15-20%).
+4. Range position — near 52-week high, middle, or near 52-week low.
+5. Dividend character — is this a meaningful income payer?
+6. Honest caveat — what this snapshot does NOT tell you (company fundamentals, earnings, macro, valuation, current news).
+"""

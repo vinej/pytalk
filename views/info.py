@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import streamlit as st
 
+from pytalk.auth import current_user
 from pytalk.i18n import t
 from pytalk.llm import current_model_label
 from pytalk.portfolios import current_db_label
 
-CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
+CURRENT_USER = current_user()
 
 
 st.title(t("nav.info"))

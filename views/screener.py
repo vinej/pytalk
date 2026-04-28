@@ -7,12 +7,13 @@ import pandas as pd
 import streamlit as st
 
 from pytalk import get_prices
+from pytalk.auth import current_user
 from pytalk.custom_tickers import list_user_tickers
 from pytalk.i18n import category_label, t
 from pytalk.indicators import rsi, sma
 from pytalk.universe import CATEGORIES, CUSTOM_CATEGORY, UNIVERSE
 
-CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
+CURRENT_USER = current_user()
 
 # Widget-state preservation is handled once in App.py.
 

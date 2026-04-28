@@ -25,6 +25,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from pytalk import get_prices
+from pytalk.auth import current_user
 from pytalk.custom_tickers import (
     add_ticker,
     combined_label,
@@ -34,21 +35,17 @@ from pytalk.custom_tickers import (
 from pytalk.data import detect_category, get_currency
 from pytalk.i18n import category_label, t
 from pytalk.indicators import rsi, sma
-from pytalk.llm import ask_llm_stream, llm_available, unavailable_message
+from pytalk.llm import build_describe_ticker_prompt, build_validate_portfolio_prompt
 from pytalk.portfolios import get_portfolio, list_portfolios
-from pytalk.universe import CATEGORIES, OTHER, UNIVERSE, label, tickers
+from pytalk.ui import render_llm_block
+from pytalk.universe import CATEGORIES, OTHER, label, tickers
 
-CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
+CURRENT_USER = current_user()
 
 _SOURCE_LABELS = {
     "Single ticker": "common.source_single",
     "Portfolio": "common.source_portfolio",
 }
-
-
-def _pop_ss(key: str) -> None:
-    """Callback helper — drops a session_state key before Streamlit's auto-rerun."""
-    st.session_state.pop(key, None)
 
 # ── Sidebar: source + ticker/portfolio + lookback + chart toggles ───────────
 with st.sidebar:
@@ -527,153 +524,30 @@ else:
     _render_perf_grid(year_items)
 
 if is_portfolio and not perf_prices.empty and len(perf_prices) >= 2:
-    _validate_key = f"_analysis_validate_{portfolio_name}"
-    if st.button(t("analysis.validate_btn")):
-        if not llm_available():
-            st.error(unavailable_message())
-        else:
-            _by_type: dict[str, float] = {}
-            for _h in portfolio.holdings:
-                _by_type[_h.category] = (
-                    _by_type.get(_h.category, 0.0) + weights_norm[_h.ticker]
-                )
-            _mix_text = ", ".join(f"{tk}: {w:.1%}" for tk, w in _by_type.items())
-            _holdings_text = "\n".join(
-                f"  - {_h.ticker} ({_h.category}) "
-                f"[{UNIVERSE.get(_h.category, {}).get(_h.ticker) or 'custom'}] — "
-                f"{weights_norm[_h.ticker]:.1%}"
-                for _h in portfolio.holdings
-            )
-            _prompt = f"""Review this portfolio structure.
-
-Name: {portfolio_name}
-Total holdings: {len(portfolio.holdings)}
-Asset-type mix: {_mix_text}
-
-Holdings:
-{_holdings_text}
-
-Respond as a markdown numbered list — one short sentence per point, no introduction, no final paragraph:
-1. Overall diversification — across asset classes, geography, and sectors.
-2. Concentration risks — any single holding or type too dominant?
-3. Overlap — do multiple holdings track the same thing (e.g. two S&P 500 ETFs)?
-4. What kind of investor this portfolio suits (growth / income / capital preservation).
-5. One honest caveat (hidden correlations, home-bias, missing asset classes, etc.).
-6. One constructive observation — what would make it more robust, without recommending specific tickers.
-
-Don't invent facts about any holding you don't recognise; just say "unfamiliar".
-"""
-            with st.container(border=True):
-                _full_val = st.write_stream(ask_llm_stream(_prompt))
-            st.session_state[_validate_key] = _full_val
-    else:
-        _stored_validate = st.session_state.get(_validate_key)
-        if _stored_validate:
-            with st.container(border=True):
-                st.markdown(_stored_validate)
-
-    if st.session_state.get(_validate_key):
-        st.button(
-            t("analysis.clear_validation"),
-            key=f"clear_analysis_validate_{portfolio_name}",
-            on_click=_pop_ss,
-            args=(_validate_key,),
-        )
+    render_llm_block(
+        f"analysis_validate_{portfolio_name}",
+        button_label=t("analysis.validate_btn"),
+        clear_label=t("analysis.clear_validation"),
+        prompt_fn=lambda: build_validate_portfolio_prompt(
+            name=portfolio_name,
+            holdings=portfolio.holdings,
+            weights=weights_norm,
+        ),
+    )
 
 elif not is_portfolio and not perf_prices.empty and len(perf_prices) >= 2:
-    _describe_key = f"_analysis_describe_{ticker}"
-    if st.button(t("analysis.describe_btn")):
-        if not llm_available():
-            st.error(unavailable_message())
-        else:
-            _close = perf_prices["close"]
-            _adj = perf_prices["adj_close"]
-            _curr = float(_close.iloc[-1])
-
-            def _last(s: pd.Series) -> float | None:
-                v = s.dropna()
-                return float(v.iloc[-1]) if not v.empty else None
-
-            _sma20 = _last(_close.rolling(20).mean())
-            _sma50 = _last(_close.rolling(50).mean())
-            _sma200 = _last(_close.rolling(200).mean())
-            _rsi14 = _last(rsi(_close, 14))
-
-            _year_close = _close.loc[pd.Timestamp(end) - pd.DateOffset(months=12) :]
-            _pos_52w: float | None = None
-            _vol: float | None = None
-            if not _year_close.empty and _year_close.max() > _year_close.min():
-                _pos_52w = (
-                    (_curr - float(_year_close.min()))
-                    / (float(_year_close.max()) - float(_year_close.min()))
-                    * 100
-                )
-            _year_rets = _year_close.pct_change().dropna()
-            if len(_year_rets) > 20:
-                _vol = float(_year_rets.std()) * (252 ** 0.5) * 100
-
-            # 1y TR vs PR → implied dividend yield
-            _target_1y = pd.Timestamp(end) - pd.DateOffset(months=12)
-            _before_1y = perf_prices.loc[:_target_1y]
-            _div_text = "n/a"
-            if not _before_1y.empty:
-                _past_pr = float(_before_1y["close"].iloc[-1])
-                _past_tr = float(_before_1y["adj_close"].iloc[-1])
-                if _past_pr > 0 and _past_tr > 0:
-                    _pr_1y = (_curr / _past_pr - 1) * 100
-                    _tr_1y = (float(_adj.iloc[-1]) / _past_tr - 1) * 100
-                    _gap = _tr_1y - _pr_1y
-                    if _gap > 0.5:
-                        _div_text = f"~{_gap:.1f}% (meaningful dividend contribution)"
-                    elif _gap > 0.05:
-                        _div_text = f"~{_gap:.2f}% (small dividend)"
-                    else:
-                        _div_text = "negligible / no dividend"
-
-            def _fmt(v: float | None, suffix: str = "") -> str:
-                return "—" if v is None else f"{v:.2f}{suffix}"
-
-            _name_bit = UNIVERSE.get(category, {}).get(ticker, "")
-            _prompt = f"""Summarize the current technical state of {ticker}{' (' + _name_bit + ')' if _name_bit else ''}.
-
-Current price: {_curr:.2f} {_currency or ''}
-Moving averages:
-  SMA 20:  {_fmt(_sma20)}
-  SMA 50:  {_fmt(_sma50)}
-  SMA 200: {_fmt(_sma200)}
-Momentum:
-  RSI(14): {_fmt(_rsi14)}
-Range:
-  52-week position: {_fmt(_pos_52w, '%')} (0 = at 52w low, 100 = at 52w high)
-Risk:
-  Annualized volatility (1y): {_fmt(_vol, '%')}
-Dividend character:
-  1y TR-PR gap: {_div_text}
-
-Respond as a markdown numbered list - one short sentence per point, no introduction, no final paragraph:
-1. Trend — where the price sits vs SMA 50 and SMA 200, what that suggests.
-2. Momentum — what RSI(14) and recent moves imply (overbought / neutral / oversold).
-3. Volatility regime — calm, elevated, or extreme compared to normal equity (~15-20%).
-4. Range position — near 52-week high, middle, or near 52-week low.
-5. Dividend character — is this a meaningful income payer?
-6. Honest caveat — what this snapshot does NOT tell you (company fundamentals, earnings, macro, valuation, current news).
-"""
-            with st.container(border=True):
-                _full_desc = st.write_stream(ask_llm_stream(_prompt))
-            st.session_state[_describe_key] = _full_desc
-    else:
-        _stored_desc = st.session_state.get(_describe_key)
-        if _stored_desc:
-            with st.container(border=True):
-                st.markdown(_stored_desc)
-
-    if st.session_state.get(_describe_key):
-        st.button(
-            t("analysis.clear_snapshot"),
-            key=f"clear_analysis_describe_{ticker}",
-            on_click=_pop_ss,
-            args=(_describe_key,),
-        )
+    render_llm_block(
+        f"analysis_describe_{ticker}",
+        button_label=t("analysis.describe_btn"),
+        clear_label=t("analysis.clear_snapshot"),
+        prompt_fn=lambda: build_describe_ticker_prompt(
+            ticker=ticker,
+            name=_name,
+            perf_prices=perf_prices,
+            currency=_currency,
+            end=end,
+        ),
+    )
 
 # ── Chart: dynamic subplot grid ─────────────────────────────────────────────
 # Rows are added in a fixed order so `_next_row` arithmetic stays predictable:

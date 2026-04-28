@@ -3,6 +3,7 @@ from __future__ import annotations
 import requests
 import streamlit as st
 
+from pytalk.auth import current_user
 from pytalk.custom_tickers import add_ticker, list_user_tickers, remove_ticker
 from pytalk.data import detect_category
 from pytalk.i18n import category_label, t
@@ -39,7 +40,7 @@ def _search_yahoo(query: str, max_results: int = 10) -> list[dict]:
         })
     return out
 
-CURRENT_USER = (st.user.email or st.user.get("preferred_username", "")).strip().lower()
+CURRENT_USER = current_user()
 
 # Widget-state preservation is handled once in App.py.
 
